@@ -18,15 +18,12 @@ from book_research.configuration import Configuration
 from book_research.tools import get_tavily_search_tool
 
 
-# Initialize configurable model
 configurable_model = init_chat_model(
     configurable_fields=("model", "max_tokens", "temperature", "api_key"),
 )
 
 
-# ============================================================================
-# POST WRITING TOOL (using @tool decorator)
-# ============================================================================
+
 
 @tool
 def format_social_post(
@@ -58,9 +55,7 @@ def format_social_post(
     return post
 
 
-# ============================================================================
-# ROUTING TOOL - NOW INCLUDES POST WRITING
-# ============================================================================
+
 
 class SearchRouting(BaseModel):
     """Structured output for search routing decision."""
@@ -143,9 +138,7 @@ Determine the best action."""
     return routing
 
 
-# ============================================================================
-# REFLECTION TOOL (Similar to think_tool pattern)
-# ============================================================================
+
 async def post_writing_agent(
     state: AgentState,
     config: RunnableConfig,
@@ -159,7 +152,6 @@ async def post_writing_agent(
     configurable = Configuration.from_runnable_config(config)
     search_results = state.get("search_results", {})
     
-    # Step 1: Get book passages from PDF
     try:
         results = pdf_retriever.get_relevant_documents("plot themes characters quotes")
         passages = []
@@ -172,13 +164,12 @@ async def post_writing_agent(
     except Exception as e:
         book_content = f"Limited content available."
     
-    # Step 2: Create LLM with formatting tool bound
     tools = [format_social_post]
     
     model_config = {
         "model": f"openai:{configurable.chat_model}",
         "max_tokens": 2000,
-        "temperature": 0.7,  # More creative for posts
+        "temperature": 0.7, 
         "api_key": config.get("configurable", {}).get("openai_api_key"),
     }
     
@@ -186,10 +177,8 @@ async def post_writing_agent(
         configurable_fields=("model", "max_tokens", "temperature", "api_key"),
     ).with_config(model_config)
     
-    # BIND TOOLS to the LLM
     llm_with_tools = llm.bind_tools(tools)
     
-    # Step 3: Create prompt with book content
     prompt = f"""You are a creative social media content writer for book promotions.
 
 Write an engaging social media post about "Thief of Sorrows" by Kristen Long.
@@ -209,14 +198,11 @@ When you're done writing, use the format_social_post tool to format it properly.
 
 Write the post now:"""
     
-    # Step 4: Get response - LLM may use the tool
     response = await llm_with_tools.ainvoke([HumanMessage(content=prompt)])
     
-    # Step 5: Check if LLM called the formatting tool
     final_content = response.content
     
     if response.tool_calls:
-        # LLM chose to use the tool!
         tool_call = response.tool_calls[0]
         if tool_call["name"] == "format_social_post":
             formatted = format_social_post.invoke(tool_call["args"])
@@ -361,7 +347,6 @@ async def generate_response(
     search_target = search_results.get("search_target", "unknown")
     web_search_info = search_results.get("web_search_info", "")
 
-    # Build context-aware prompt based on search source
     if search_target == "pdf_fulltext":
         prompt = f"""The user asked about: '{query}'
 
@@ -443,7 +428,6 @@ async def route_search(
     book_request = state.get("book_request")
     messages = state.get("messages", [])
     
-    # GET ORIGINAL USER QUERY
     original_query = ""
     for msg in reversed(messages):
         if isinstance(msg, dict) and msg.get("role") == "user":
@@ -453,7 +437,6 @@ async def route_search(
             original_query = msg.content
             break
     
-    # Build search query
     if book_request.request_type == "specific_book":
         search_query = book_request.specific_book_title
     else:
@@ -462,7 +445,6 @@ async def route_search(
             query_parts.append(" ".join(book_request.interests))
         search_query = " ".join(query_parts) if query_parts else "books"
     
-    # Use ORIGINAL query for routing
     routing = await route_search_query(
         original_query if original_query else search_query,
         book_request.request_type, 
@@ -477,14 +459,13 @@ async def route_search(
         "routing_reasoning": routing.reasoning
     }
     
-    # Route to appropriate agent INCLUDING POST WRITING
     if routing.search_target == "write_post":
         next_node = "post_writing_agent"
     elif routing.search_target == "pdf_fulltext":
         next_node = "pdf_search_agent"
     elif routing.search_target == "csv_metadata":
         next_node = "csv_search_agent"
-    else:  # both
+    else:  
         next_node = "combined_search_agent"
     
     return Command(
@@ -728,7 +709,6 @@ async def check_satisfaction(
     search_iterations = state.get("search_iterations", 0)
     book_request = state.get("book_request")
 
-    # Hard limit to prevent infinite loops (like max_researcher_iterations)
     if search_iterations >= 3:
         return Command(
             goto="generate_response",
@@ -737,20 +717,16 @@ async def check_satisfaction(
             }
         )
 
-    # Check if we have any results
     books_count = search_results.get("books_count", 0)
     search_target = search_results.get("search_target", "")
     request_type = book_request.request_type if book_request else "unclear"
 
-    # Skip satisfaction check for fast response types
     if search_target == "write_post":
         return Command(goto="generate_response")
 
-    # Skip satisfaction loop for recommendations if we have results (faster response)
     if request_type == "recommendation" and books_count > 0:
         return Command(goto="generate_response")
     
-    # Use structured output to evaluate satisfaction
     model_config = {
         "model": f"openai:{configurable.chat_model}",
         "max_tokens": 500,
@@ -764,7 +740,6 @@ async def check_satisfaction(
         .with_config(model_config)
     )
     
-    # Create reflection prompt
     original_query = search_results.get("original_query", "")
     current_findings = search_results.get("books", [])
     
@@ -790,7 +765,6 @@ Consider:
     evaluation = await satisfaction_model.ainvoke([HumanMessage(content=prompt)])
     
     if evaluation.is_satisfied:
-        # Satisfied - proceed to generate response
         return Command(
             goto="generate_response",
             update={
@@ -798,14 +772,10 @@ Consider:
             }
         )
     else:
-        # Not satisfied - refine and try again
-        # Update search strategy based on evaluation
         if evaluation.next_strategy == "try_different_source":
-            # Switch search target
             new_target = "pdf_fulltext" if search_target == "csv_metadata" else "csv_metadata"
             search_results["search_target"] = new_target
         elif evaluation.next_strategy == "expand_search":
-            # Broaden the search query
             search_results["query"] = f"{search_results.get('query', '')} similar related"
         
         return Command(
@@ -844,7 +814,6 @@ async def check_post_revision(
     messages = state.get("messages", [])
     post_revisions = state.get("post_revisions", 0)
     
-    # Limit revisions to prevent infinite loops
     if post_revisions >= 2:
         return Command(
             goto=END,
@@ -852,24 +821,15 @@ async def check_post_revision(
                 "messages": [AIMessage(content="Maximum post revisions reached (2). Final version above.")]
             }
         )
-    
-    # Check last user message for revision request
-    # (In practice, you'd check for actual user input here)
-    # For now, this is a placeholder
-    
-    return Command(goto=END)  # Default to ending
+    return Command(goto=END)
 
 
-# ============================================================================
-# UPDATED GRAPH CONSTRUCTION WITH LOOPS
-# ============================================================================
 
 def build_search_subgraph_with_loop(csv_retriever, pdf_retriever):
     """Build search subgraph with satisfaction checking loop."""
     
     subgraph = StateGraph(AgentState, config_schema=Configuration)
     
-    # Wrapper functions (same as before)
     async def csv_search_with_retriever(state, config):
         return await csv_search_agent(state, config, csv_retriever)
     
@@ -882,7 +842,6 @@ def build_search_subgraph_with_loop(csv_retriever, pdf_retriever):
     async def post_writing_with_retriever(state, config):
         return await post_writing_agent(state, config, pdf_retriever)
 
-    # Add all nodes (NO check_satisfaction in subgraph - that's in the main graph)
     subgraph.add_node("route_search", route_search)
     subgraph.add_node("csv_search_agent", csv_search_with_retriever)
     subgraph.add_node("pdf_search_agent", pdf_search_with_retriever)
@@ -891,19 +850,15 @@ def build_search_subgraph_with_loop(csv_retriever, pdf_retriever):
     subgraph.add_node("post_writing_agent", post_writing_with_retriever)
     subgraph.add_node("check_results", check_results)
 
-    # Edges
     subgraph.add_edge(START, "route_search")
 
-    # All search agents go to check_results (which may trigger web search)
     subgraph.add_edge("csv_search_agent", "check_results")
     subgraph.add_edge("pdf_search_agent", "check_results")
     subgraph.add_edge("combined_search_agent", "check_results")
     # check_results conditionally routes to web_search_agent or END
 
-    # Web search also goes to check_results (but will exit immediately)
     subgraph.add_edge("web_search_agent", END)
 
-    # Post writing goes directly to END
     subgraph.add_edge("post_writing_agent", END)
 
     return subgraph.compile()
@@ -916,18 +871,15 @@ def build_book_agent(csv_retriever, pdf_retriever):
     
     builder = StateGraph(AgentState, config_schema=Configuration)
     
-    # Main nodes
     builder.add_node("clarify_with_user", clarify_with_user)
     builder.add_node("parse_request", parse_request)
     builder.add_node("search_subgraph", search_subgraph)
     builder.add_node("check_satisfaction", check_satisfaction)  # Add satisfaction check
     builder.add_node("generate_response", generate_response)
     
-    # Edges
     builder.add_edge(START, "clarify_with_user")
     builder.add_edge("parse_request", "search_subgraph")
     builder.add_edge("search_subgraph", "check_satisfaction")  # Go to satisfaction check
-    # check_satisfaction conditionally goes to search_subgraph (loop) or generate_response
     builder.add_edge("generate_response", END)
     
     return builder.compile()

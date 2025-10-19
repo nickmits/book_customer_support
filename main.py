@@ -12,22 +12,15 @@ import uvicorn
 import os
 import json
 
-# Load environment variables
 from dotenv import load_dotenv
 load_dotenv()
 
 
-# ============================================================================
-# DEPENDENCY-SAFE IMPORTS
-# ============================================================================
-
-# Try to import book agent components safely
 AGENT_AVAILABLE = False
 Configuration = None
 AgentState = None
 build_book_agent = None
 
-# Advanced retrieval imports
 try:
     from langchain_openai import OpenAIEmbeddings
     from langchain_community.vectorstores import Qdrant
@@ -55,7 +48,6 @@ except ImportError as e:
     print(f"[WARNING] Book agent components not available: {e}")
     print("[INFO] Running in basic mode with smart AI responses")
 
-    # Create safe fallback classes
     class Configuration:
         def __init__(self):
             self.chat_model = "gpt-4o-mini"
@@ -71,9 +63,6 @@ except ImportError as e:
         return None
 
 
-# ============================================================================
-# PYDANTIC MODELS
-# ============================================================================
 
 class Book(BaseModel):
     """Book model for our inventory database."""
@@ -110,7 +99,7 @@ class BookUpdate(BaseModel):
 class AIAgentRequest(BaseModel):
     """Request model for AI agent chat."""
     query: str
-    request_type: Optional[str] = None  # Let the agent determine this intelligently
+    request_type: Optional[str] = None  
 
 class AIAgentResponse(BaseModel):
     """Response model for AI agent chat."""
@@ -127,10 +116,6 @@ class BookstoreStats(BaseModel):
     average_price: float
 
 
-# ============================================================================
-# FASTAPI APPLICATION SETUP
-# ============================================================================
-
 app = FastAPI(
     title="BookStore API",
     description="A cozy bookstore management system with elegant endpoints for book lovers",
@@ -146,7 +131,6 @@ app = FastAPI(
     ]
 )
 
-# Configure CORS for frontend integration
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -160,58 +144,159 @@ app.add_middleware(
 # DATA STORAGE
 # ============================================================================
 
-# In-memory bookstore inventory with sample books
-bookstore_inventory: List[Book] = [
-    Book(
-        id=1,
-        title="The Great Gatsby",
-        author="F. Scott Fitzgerald",
-        isbn="9780743273565",
-        genre="Classic Literature",
-        price=12.99,
-        stock=15,
-        description="A masterpiece of American literature capturing the Jazz Age.",
-        add_date=datetime.now()
-    ),
-    Book(
-        id=2,
-        title="To Kill a Mockingbird",
-        author="Harper Lee",
-        isbn="9780061120084",
-        genre="Fiction",
-        price=14.95,
-        stock=8,
-        description="A gripping tale of racial injustice and childhood innocence.",
-        add_date=datetime.now()
-    ),
-    Book(
-        id=3,
-        title="1984",
-        author="George Orwell",
-        isbn="9780451524935",
-        genre="Dystopian Fiction",
-        price=11.99,
-        stock=12,
-        description="A prophetic vision of a totalitarian future society.",
-        add_date=datetime.now()
-    ),
-    Book(
-        id=4,
-        title="Thief of Sorrows",
-        author="Kristen Long",
-        isbn="9781234567890",
-        genre="Dark Fantasy",
-        price=16.99,
-        stock=5,
-        description="A dark fantasy masterpiece with complex characters and intricate world-building.",
-        add_date=datetime.now()
-    )
-]
+# In-memory bookstore inventory - will be populated from CSV on startup
+bookstore_inventory: List[Book] = []
 
 # Global agent state
 book_agent = None
 csv_retriever = None
 pdf_retriever = None
+
+
+# ============================================================================
+# CSV DATA LOADING
+# ============================================================================
+
+def load_csv_books_into_inventory():
+    """Load books from CSV file into bookstore_inventory."""
+    global bookstore_inventory
+
+    csv_path = "book_research/data/space_exploration_books.csv"
+
+    if not os.path.exists(csv_path):
+        print(f"[WARNING] CSV file not found: {csv_path}")
+        print("[INFO] Using fallback inventory")
+
+        # Try to add PDF book to fallback inventory
+        pdf_path = "book_research/data/thief_of_sorrows.pdf"
+        if os.path.exists(pdf_path):
+            pdf_metadata = extract_pdf_metadata(pdf_path)
+            bookstore_inventory = [
+                Book(
+                    id=1,
+                    title=pdf_metadata["title"],
+                    author=pdf_metadata["author"],
+                    isbn=f"978{abs(hash(pdf_metadata['title'])) % 10000000000:010d}",
+                    genre=pdf_metadata.get("subject", "Fiction") or "Fiction",
+                    price=16.99,
+                    stock=5,
+                    description=f"Full text available. {pdf_metadata.get('subject', '')}".strip(),
+                    add_date=datetime.now()
+                )
+            ]
+        else:
+            # Ultimate fallback - empty inventory
+            bookstore_inventory = []
+            print("[WARNING] No CSV or PDF found. Starting with empty inventory.")
+        return
+
+    try:
+        if not RETRIEVAL_AVAILABLE:
+            print("[WARNING] Pandas not available, cannot load CSV")
+            return
+
+        import pandas as pd
+        df = pd.read_csv(csv_path)
+        print(f"[INFO] Loading {len(df)} books from CSV into inventory...")
+
+        for index, row in df.iterrows():
+            # Extract genre from subjects (take first subject as primary genre)
+            subjects = str(row.get('subjects', 'General Fiction'))
+            genre = subjects.split(';')[0].strip() if subjects else "General Fiction"
+
+            # Generate ISBN from work_key if not present
+            work_key = str(row.get('work_key', ''))
+            isbn = f"978{abs(hash(work_key)) % 10000000000:010d}"
+
+            # Set default price based on book type
+            price = 14.99  # Default price
+            stock = 10  # Default stock
+
+            book = Book(
+                id=index + 1,
+                title=str(row.get('title', 'Unknown Title')),
+                author=str(row.get('author', 'Unknown Author')),
+                isbn=isbn,
+                genre=genre,
+                price=price,
+                stock=stock,
+                description=str(row.get('description', 'No description available.')),
+                add_date=datetime.now()
+            )
+            bookstore_inventory.append(book)
+
+        # Add PDF book to inventory (extract metadata from PDF)
+        pdf_path = "book_research/data/thief_of_sorrows.pdf"
+        if os.path.exists(pdf_path):
+            pdf_metadata = extract_pdf_metadata(pdf_path)
+
+            # Generate ISBN from PDF title
+            pdf_isbn = f"978{abs(hash(pdf_metadata['title'])) % 10000000000:010d}"
+
+            bookstore_inventory.append(
+                Book(
+                    id=len(bookstore_inventory) + 1,
+                    title=pdf_metadata["title"],
+                    author=pdf_metadata["author"],
+                    isbn=pdf_isbn,
+                    genre=pdf_metadata.get("subject", "Fiction") or "Fiction",
+                    price=16.99,
+                    stock=5,
+                    description=f"Full text available. {pdf_metadata.get('subject', '')}".strip(),
+                    add_date=datetime.now()
+                )
+            )
+            print(f"[OK] Added PDF book '{pdf_metadata['title']}' to inventory")
+
+        print(f"[OK] Loaded {len(bookstore_inventory)} books into inventory")
+
+    except Exception as e:
+        print(f"[ERROR] Failed to load CSV books: {e}")
+        import traceback
+        traceback.print_exc()
+
+
+# ============================================================================
+# PDF METADATA EXTRACTION
+# ============================================================================
+
+def extract_pdf_metadata(pdf_path: str) -> dict:
+    """Extract metadata from PDF file."""
+    try:
+        import fitz  # PyMuPDF
+
+        doc = fitz.open(pdf_path)
+        metadata = doc.metadata
+
+        # Extract common metadata fields
+        pdf_metadata = {
+            "title": metadata.get("title", "Unknown Title"),
+            "author": metadata.get("author", "Unknown Author"),
+            "subject": metadata.get("subject", ""),
+            "keywords": metadata.get("keywords", ""),
+            "creator": metadata.get("creator", ""),
+            "producer": metadata.get("producer", ""),
+            "creation_date": metadata.get("creationDate", ""),
+            "modification_date": metadata.get("modDate", ""),
+        }
+
+        doc.close()
+
+        print(f"[INFO] Extracted PDF metadata:")
+        print(f"  Title: {pdf_metadata['title']}")
+        print(f"  Author: {pdf_metadata['author']}")
+        print(f"  Subject: {pdf_metadata['subject']}")
+
+        return pdf_metadata
+
+    except Exception as e:
+        print(f"[WARNING] Could not extract PDF metadata: {e}")
+        return {
+            "title": "Unknown Title",
+            "author": "Unknown Author",
+            "subject": "",
+            "keywords": "",
+        }
 
 
 # ============================================================================
@@ -285,22 +370,26 @@ Subjects: {row['subjects']}
                 csv_documents.append(doc)
 
         # ============================================================================
-        # Load PDF Data (Thief of Sorrows)
+        # Load PDF Data (extract metadata from file)
         # ============================================================================
         pdf_path = "book_research/data/thief_of_sorrows.pdf"
         if not os.path.exists(pdf_path):
             print(f"[WARNING] PDF file not found: {pdf_path}")
             pdf_chunks = []
+            pdf_book_metadata = {"title": "Unknown", "author": "Unknown"}
         else:
+            # Extract metadata from PDF
+            pdf_book_metadata = extract_pdf_metadata(pdf_path)
+
             loader = PyMuPDFLoader(pdf_path)
             pdf_pages = loader.load()
             print(f"[INFO] Loaded {len(pdf_pages)} pages from PDF")
 
-            # Add metadata
+            # Add metadata using extracted info
             for i, page in enumerate(pdf_pages):
                 page.metadata.update({
-                    "book_title": "Thief of Sorrows",
-                    "author": "Kristen Long",
+                    "book_title": pdf_book_metadata["title"],
+                    "author": pdf_book_metadata["author"],
                     "source_type": "pdf_fulltext",
                     "has_full_text": True,
                     "page_number": i + 1,
@@ -404,13 +493,6 @@ Subjects: {row['subjects']}
 # ============================================================================
 # UTILITY FUNCTIONS
 # ============================================================================
-
-def get_configuration() -> Configuration:
-    """Get configuration object, with fallback if not available."""
-    try:
-        return Configuration()
-    except:
-        return Configuration()  # Use our fallback class
 
 def calculate_stats() -> Dict[str, Any]:
     """Calculate bookstore statistics."""
@@ -804,11 +886,15 @@ async def chat_with_ai_agent(request: AIAgentRequest):
 
 if __name__ == "__main__":
     print("[START] Starting BookStore API...")
+
+    # Load books from CSV into inventory
+    load_csv_books_into_inventory()
+
     print(f"[INFO] Loaded {len(bookstore_inventory)} books in inventory")
     print(f"[INFO] AI Agent available: {AGENT_AVAILABLE}")
     print("[INFO] Server starting at http://localhost:8000")
     print("[INFO] API documentation available at http://localhost:8000/library")
-    
+
     uvicorn.run(
         app,
         host="0.0.0.0",

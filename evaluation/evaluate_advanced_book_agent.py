@@ -1,6 +1,7 @@
 """
-RAGAS Evaluation for Advanced Book Agent with Multiple Retrievers
-Tests the full agent with CSV catalog, PDF retriever, and intelligent routing
+RAGAS Evaluation for Advanced Retrieval System
+Evaluates the advanced retrieval system with Ensemble, BM25, Multi-Query, and Cohere reranking
+FIXED VERSION - Aligned chunk sizes for fair evaluation
 """
 
 from dotenv import load_dotenv
@@ -26,7 +27,7 @@ from langchain_community.document_loaders import PyMuPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 import pandas as pd
 
-# Import the advanced retrieval components from main.py
+# Import the advanced retrieval components
 from langchain_community.vectorstores import Qdrant
 from langchain.retrievers import EnsembleRetriever
 from langchain.retrievers.multi_query import MultiQueryRetriever
@@ -36,11 +37,6 @@ from langchain_community.retrievers import BM25Retriever
 from langchain_core.documents import Document
 from langchain.chat_models import init_chat_model
 
-# Import your book agent components
-from book_research.book_agent import build_book_agent
-from book_research.configuration import Configuration
-from book_research.state import AgentState
-
 # Apply nest_asyncio for event loop management
 nest_asyncio.apply()
 if sys.platform == 'win32':
@@ -48,13 +44,31 @@ if sys.platform == 'win32':
 
 load_dotenv()
 
+# CRITICAL: ALIGNED CHUNK PARAMETERS - MUST BE SAME EVERYWHERE
+CHUNK_SIZE = 800  # Same as simple retriever
+CHUNK_OVERLAP = 200  # Same as simple retriever
 
-def initialize_advanced_retrievers():
+def test_retriever_directly(retriever, test_questions: List[str]):
+    """Quick test to verify retriever is working."""
+    print("\n[RETRIEVER TEST]")
+    print("="*50)
+    
+    for q in test_questions:
+        docs = retriever.get_relevant_documents(q)
+        print(f"\nQuestion: {q}")
+        print(f"Retrieved: {len(docs)} documents")
+        if docs:
+            print(f"Top result preview: {docs[0].page_content[:150]}...")
+            print(f"Metadata: {docs[0].metadata}")
+    
+    print("="*50)
+
+def initialize_advanced_retrievers(chunk_size: int = CHUNK_SIZE, chunk_overlap: int = CHUNK_OVERLAP):
     """
-    Initialize the advanced CSV and PDF retrievers with multiple strategies.
-    Based on the implementation in main.py
+    Initialize the advanced CSV and PDF retrievers with aligned chunk sizes.
     """
     print("[INIT] Initializing advanced retrievers...")
+    print(f"[PARAMS] chunk_size={chunk_size}, overlap={chunk_overlap}")
     
     # Get API keys
     openai_api_key = os.getenv("OPENAI_API_KEY")
@@ -77,7 +91,7 @@ def initialize_advanced_retrievers():
     )
     
     # ============================================================================
-    # Load CSV Data (Book Catalog)
+    # Load CSV Data (Book Catalog) - Optional for this evaluation
     # ============================================================================
     csv_path = "book_research/data/space_exploration_books.csv"
     csv_retriever = None
@@ -114,17 +128,14 @@ Subjects: {row['subjects']}"""
             collection_name="csv_catalog"
         )
         
-        # BM25 for keyword search
         csv_bm25 = BM25Retriever.from_documents(csv_documents)
         csv_bm25.k = 5
         
-        # Multi-query for query expansion
         csv_multi_query = MultiQueryRetriever.from_llm(
             retriever=csv_vectorstore.as_retriever(search_kwargs={"k": 10}),
             llm=chat_model
         )
         
-        # Ensemble with optional reranking
         if cohere_api_key:
             csv_compression = ContextualCompressionRetriever(
                 base_retriever=csv_multi_query,
@@ -143,7 +154,7 @@ Subjects: {row['subjects']}"""
             print("[OK] CSV retriever created (no reranking)")
     
     # ============================================================================
-    # Load PDF Data (Thief of Sorrows) - Full document
+    # Load PDF Data (Thief of Sorrows) - CRITICAL: Use aligned chunk sizes
     # ============================================================================
     pdf_path = "book_research/data/thief_of_sorrows.pdf"
     pdf_retriever = None
@@ -160,16 +171,18 @@ Subjects: {row['subjects']}"""
                 "author": "Kristen Long",
                 "source_type": "pdf_fulltext",
                 "page_number": i + 1,
-                "total_pages": len(pdf_pages)
+                "total_pages": len(pdf_pages),
+                "page": i + 1  # Add for compatibility
             })
         
-        # Split into chunks with smaller size for better retrieval
+        # CRITICAL FIX: Use aligned chunk sizes
         text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=500,  # Smaller chunks for better precision
-            chunk_overlap=100
+            chunk_size=chunk_size,  # ALIGNED with test generation
+            chunk_overlap=chunk_overlap,  # ALIGNED with test generation
+            length_function=len
         )
         pdf_chunks = text_splitter.split_documents(pdf_pages)
-        print(f"[INFO] Created {len(pdf_chunks)} chunks from PDF")
+        print(f"[INFO] Created {len(pdf_chunks)} chunks from PDF with size {chunk_size}")
         
         # Create advanced PDF retriever
         pdf_vectorstore = Qdrant.from_documents(
@@ -181,11 +194,11 @@ Subjects: {row['subjects']}"""
         
         # BM25 for keyword search
         pdf_bm25 = BM25Retriever.from_documents(pdf_chunks)
-        pdf_bm25.k = 10  # More results for PDF
+        pdf_bm25.k = 10
         
         # Multi-query for better coverage
         pdf_multi_query = MultiQueryRetriever.from_llm(
-            retriever=pdf_vectorstore.as_retriever(search_kwargs={"k": 20}),  # More results
+            retriever=pdf_vectorstore.as_retriever(search_kwargs={"k": 15}),
             llm=chat_model
         )
         
@@ -206,110 +219,72 @@ Subjects: {row['subjects']}"""
                 weights=[0.5, 0.5]
             )
             print("[OK] PDF retriever created (no reranking)")
+        
+        # Test the retriever immediately
+        test_questions = [
+            "Who is the author of Thief of Sorrows?",
+            "What is the main character's name?"
+        ]
+        test_retriever_directly(pdf_retriever, test_questions)
     
     return csv_retriever, pdf_retriever
 
-
-class AdvancedBookAgentChain:
-    """
-    Wrapper for the advanced book agent with intelligent routing.
-    """
+class PDFOnlyAdvancedChain:
+    """Direct PDF retrieval bypassing agent routing for fair evaluation."""
     
-    def __init__(self, csv_retriever, pdf_retriever):
-        self.csv_retriever = csv_retriever
+    def __init__(self, pdf_retriever):
         self.pdf_retriever = pdf_retriever
+        self.llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
         
-        # Build the full agent with both retrievers
-        self.agent = build_book_agent(
-            csv_retriever=self.csv_retriever,
-            pdf_retriever=self.pdf_retriever
-        )
-        
-        # Configuration for the agent
-        self.config = {
-            "configurable": {
-                "chat_model": "gpt-4o-mini",
-                "max_tokens": 1000,
-                "temperature": 0.1,
-                "allow_clarification": False,
-                "max_web_search_results": 2,
-                "openai_api_key": os.getenv("OPENAI_API_KEY"),
-                "tavily_api_key": os.getenv("TAVILY_API_KEY"),
-            }
-        }
-    
     def invoke(self, inputs: Dict[str, Any]) -> Dict[str, Any]:
-        """Synchronous invoke for RAGAS compatibility."""
-        return asyncio.run(self.ainvoke(inputs))
-    
-    async def ainvoke(self, inputs: Dict[str, Any]) -> Dict[str, Any]:
-        """Process question through the advanced agent."""
+        """Direct retrieval from PDF only."""
         question = inputs.get("question", "")
         
         try:
-            # Invoke the full agent with routing
-            result = await self.agent.ainvoke(
-                {"messages": [{"role": "user", "content": question}]},
-                self.config
-            )
+            # Direct retrieval from PDF
+            print(f"    → PDF-only retrieving for: {question[:50]}...")
+            raw_contexts = self.pdf_retriever.get_relevant_documents(question)
             
-            # Extract response
-            final_response = result.get("final_response", "")
+            print(f"    → Retrieved {len(raw_contexts)} documents")
+            if raw_contexts:
+                print(f"    → First context: {raw_contexts[0].page_content[:100]}...")
             
-            # Extract contexts from search results
-            contexts = []
-            search_results = result.get("search_results", {})
-            books = search_results.get("books", [])
+            # Generate answer from contexts
+            context_text = "\n\n".join([
+                f"[Page {doc.metadata.get('page', doc.metadata.get('page_number', 'Unknown'))}]: {doc.page_content}"
+                for doc in raw_contexts[:5]
+            ])
             
-            # Convert search results to document format
-            for book in books:
-                if isinstance(book, dict):
-                    if "content" in book:  # PDF passage
-                        content = book.get("content", "")
-                        page = book.get("page", "Unknown")
-                        context_doc = MockDocument(f"[Page {page}] {content}")
-                    elif "description" in book:  # CSV book
-                        title = book.get("title", "Unknown")
-                        author = book.get("author", "Unknown")
-                        desc = book.get("description", "")
-                        context_doc = MockDocument(f"{title} by {author}: {desc}")
-                    else:
-                        context_doc = MockDocument(str(book))
-                    contexts.append(context_doc)
+            prompt = f"""Based on the following context from the book "Thief of Sorrows", answer the question.
             
-            # Debug: Show routing decision
-            routing = search_results.get("routing_reasoning", "")
-            if routing:
-                print(f"    → Routing: {search_results.get('search_target', 'unknown')}")
+Context:
+{context_text}
+
+Question: {question}
+
+Answer (be specific and use information from the context):"""
+            
+            response = self.llm.invoke(prompt)
             
             return {
-                "response": final_response,
-                "context": contexts[:10]
+                "response": response.content,
+                "context": raw_contexts[:10]  # Return raw documents
             }
             
         except Exception as e:
-            print(f"    → Error: {e}")
+            print(f"    → Error in retrieval: {e}")
             return {"response": f"Error: {str(e)}", "context": []}
-
-
-class MockDocument:
-    """Document class for RAGAS compatibility."""
-    def __init__(self, content: str):
-        self.page_content = content
-        self.metadata = {}
 
 
 def to_text(content):
     """Convert content to text."""
     return str(content) if content else ""
 
-
 def reset_eval_fields(dataset):
     """Reset evaluation fields in dataset."""
     for row in dataset:
         row.response = None
         row.retrieved_contexts = []
-
 
 def evaluate_current_dataset(ds, evaluator_llm):
     """Standard RAGAS evaluation function."""
@@ -326,15 +301,15 @@ def evaluate_current_dataset(ds, evaluator_llm):
         raise_exceptions=False,
     )
 
-
-def load_and_chunk_pdf(pdf_path: str, chunk_size: int = 1000, chunk_overlap: int = 200):
-    """Load PDF and create chunks for test generation."""
+def load_and_chunk_pdf(pdf_path: str, chunk_size: int = CHUNK_SIZE, 
+                      chunk_overlap: int = CHUNK_OVERLAP):
+    """Load PDF and create chunks with ALIGNED parameters."""
     print(f"[Loading] PDF for test generation: {pdf_path}")
+    print(f"[CRITICAL] Using chunk_size={chunk_size}, overlap={chunk_overlap}")
     
     loader = PyMuPDFLoader(pdf_path)
     pages = loader.load()
     
-    # Add metadata
     for i, page in enumerate(pages):
         page.metadata.update({
             "page_number": i + 1,
@@ -343,32 +318,29 @@ def load_and_chunk_pdf(pdf_path: str, chunk_size: int = 1000, chunk_overlap: int
             "source_type": "pdf_fulltext"
         })
     
-    # Split into chunks
     text_splitter = RecursiveCharacterTextSplitter(
         chunk_size=chunk_size,
-        chunk_overlap=chunk_overlap
+        chunk_overlap=chunk_overlap,
+        length_function=len
     )
     pdf_chunks = text_splitter.split_documents(pages)
     
-    print(f"[Created] {len(pdf_chunks)} chunks from {len(pages)} pages for test generation")
+    print(f"[Created] {len(pdf_chunks)} chunks from {len(pages)} pages")
     return pdf_chunks
 
-
-def generate_test_questions(pdf_chunks, testset_size: int = 5, use_multiHop: bool = False):
+def generate_test_questions(pdf_chunks, testset_size: int = 10, use_multiHop: bool = False):
     """Generate test questions from PDF chunks using RAGAS."""
     print(f"\n[Generating] {testset_size} test questions from PDF...")
+    print(f"[Using] {len(pdf_chunks)} chunks for generation")
     
-    # Initialize generator LLMs
     generator_llm = LangchainLLMWrapper(ChatOpenAI(model="gpt-4o-mini"))
     generator_embeddings = LangchainEmbeddingsWrapper(OpenAIEmbeddings())
     
-    # Create TestsetGenerator
     generator = TestsetGenerator(
         llm=generator_llm,
         embedding_model=generator_embeddings
     )
     
-    # Define query distribution
     if use_multiHop:
         query_distribution = [
             (SingleHopSpecificQuerySynthesizer(llm=generator_llm), 0.5),
@@ -380,9 +352,10 @@ def generate_test_questions(pdf_chunks, testset_size: int = 5, use_multiHop: boo
             (SingleHopSpecificQuerySynthesizer(llm=generator_llm), 1.0)
         ]
     
-    # Generate dataset - use only first 5 chunks for speed
+    # Use more chunks for better coverage
+    chunks_to_use = min(20, len(pdf_chunks))
     pdf_dataset = generator.generate_with_langchain_docs(
-        pdf_chunks[:5],  
+        pdf_chunks[:chunks_to_use],
         testset_size=testset_size,
         query_distribution=query_distribution
     )
@@ -390,29 +363,34 @@ def generate_test_questions(pdf_chunks, testset_size: int = 5, use_multiHop: boo
     print(f"[Generated] {len(pdf_dataset)} questions")
     return pdf_dataset
 
-
 def run_advanced_evaluation_pipeline(
     pdf_path: str,
-    testset_size: int = 5,
-    chunk_size: int = 1000,
-    chunk_overlap: int = 200,
+    testset_size: int = 10,
+    chunk_size: int = CHUNK_SIZE,
+    chunk_overlap: int = CHUNK_OVERLAP,
     use_multiHop: bool = False
 ):
     """
-    Complete evaluation pipeline for the advanced book agent.
+    Complete evaluation pipeline for the advanced retrieval system.
     """
     print("="*70)
-    print("ADVANCED BOOK AGENT - RAGAS EVALUATION")
+    print("ADVANCED RETRIEVAL SYSTEM - RAGAS EVALUATION")
+    print("="*70)
+    print(f"Configuration:")
+    print(f"  - Chunk Size: {chunk_size}")
+    print(f"  - Chunk Overlap: {chunk_overlap}")
+    print(f"  - Test Set Size: {testset_size}")
+    print(f"  - Multi-hop: {use_multiHop}")
     print("="*70)
     
-    # Step 1: Initialize advanced retrievers
-    csv_retriever, pdf_retriever = initialize_advanced_retrievers()
+    # Step 1: Initialize advanced retrievers with aligned sizes
+    csv_retriever, pdf_retriever = initialize_advanced_retrievers(chunk_size, chunk_overlap)
     
-    if not csv_retriever and not pdf_retriever:
-        print("[ERROR] No retrievers initialized. Check your data files.")
+    if not pdf_retriever:
+        print("[ERROR] PDF retriever not initialized. Check your data files.")
         return None, None
     
-    # Step 2: Load and chunk PDF for test generation
+    # Step 2: Load and chunk PDF for test generation with SAME parameters
     pdf_chunks = load_and_chunk_pdf(pdf_path, chunk_size, chunk_overlap)
     
     # Step 3: Generate test questions
@@ -423,9 +401,10 @@ def run_advanced_evaluation_pipeline(
     print(f"\n[Sample Questions Generated]:")
     for i, row in df_questions.head(5).iterrows():
         print(f"  {i+1}. {row['user_input'][:80]}...")
-    
-    # Step 4: Initialize the advanced book agent
-    advanced_agent_chain = AdvancedBookAgentChain(csv_retriever, pdf_retriever)
+
+    # Step 4: Initialize PDF-only chain
+    print("\n[Mode] Using Advanced Retrieval System (PDF-only)")
+    chain = PDFOnlyAdvancedChain(pdf_retriever)
     
     # Step 5: Initialize evaluator LLM
     chat_model = ChatOpenAI(model="gpt-4o-mini", temperature=0)
@@ -435,21 +414,31 @@ def run_advanced_evaluation_pipeline(
     dataset = EvaluationDataset.from_pandas(df_questions)
     reset_eval_fields(dataset)
     
-    # Step 7: Process each question through the advanced agent
-    print(f"\n[Processing] {len(dataset)} questions through advanced agent...")
+    # Step 7: Process each question
+    print(f"\n[Processing] {len(dataset)} questions...")
+    print("-"*70)
+    
     for i, row in enumerate(dataset):
         q = getattr(row, "user_input", None) or getattr(row, "question", None)
         if not q:
             continue
         
-        print(f"  [{i+1}/{len(dataset)}] {q[:60]}...")
+        print(f"\n[{i+1}/{len(dataset)}] Question: {q[:80]}...")
         
-        # Invoke the advanced agent
-        out = advanced_agent_chain.invoke({"question": q})
+        # Invoke the chain
+        out = chain.invoke({"question": q})
         
         # Store results
         row.response = to_text(out["response"])
         row.retrieved_contexts = [d.page_content for d in out["context"]][:10]
+        
+        # Diagnostics
+        print(f"  - Response length: {len(row.response)} chars")
+        print(f"  - Retrieved contexts: {len(row.retrieved_contexts)}")
+        if row.retrieved_contexts:
+            print(f"  - First context sample: {row.retrieved_contexts[0][:80]}...")
+    
+    print("-"*70)
     
     # Step 8: Evaluate with RAGAS
     print("\n[Evaluating] Running RAGAS metrics...")
@@ -457,47 +446,49 @@ def run_advanced_evaluation_pipeline(
     
     return results, df_questions
 
-
 # Main execution
 if __name__ == "__main__":
     # Configuration
     PDF_PATH = "book_research/data/thief_of_sorrows.pdf"
-    TESTSET_SIZE = 5  # Start with 5 questions
-    
-    # Run the evaluation pipeline
+    TESTSET_SIZE = 10  # Increased for better evaluation
+
+    # Run advanced retrieval evaluation
+    print("\n" + "="*70)
+    print("ADVANCED RETRIEVAL SYSTEM EVALUATION")
+    print("="*70)
+
     results, questions_df = run_advanced_evaluation_pipeline(
         pdf_path=PDF_PATH,
         testset_size=TESTSET_SIZE,
-        chunk_size=1000,
-        chunk_overlap=200,
+        chunk_size=CHUNK_SIZE,
+        chunk_overlap=CHUNK_OVERLAP,
         use_multiHop=False
     )
-    
+
     # Display results
     print("\n" + "="*70)
-    print("EVALUATION RESULTS - ADVANCED AGENT")
+    print("EVALUATION RESULTS")
     print("="*70)
     print(results)
-    
-    # Detailed results
+
     if results and hasattr(results, 'to_pandas'):
         df_results = results.to_pandas()
-        
-        # Calculate averages
+
         print("\n[Average Scores]:")
         for metric in ['context_recall', 'faithfulness', 'factual_correctness(mode=f1)']:
             if metric in df_results.columns:
                 avg_score = df_results[metric].mean()
                 print(f"  {metric}: {avg_score:.3f}")
-        
-        # Save results
-        df_results.to_csv("ragas_advanced_evaluation_results.csv", index=False)
-        print("\n[Saved] Results to 'ragas_advanced_evaluation_results.csv'")
-        
+
+        df_results.to_csv("evaluation/advanced_retrieval_results.csv", index=False)
+        print("\n[Saved] Results to 'evaluation/advanced_retrieval_results.csv'")
+
         # Compare with simple retriever if available
-        if os.path.exists("ragas_evaluation_results.csv"):
-            simple_df = pd.read_csv("ragas_evaluation_results.csv")
+        simple_results_path = "evaluation/simple_retrieval_results.csv"
+        if os.path.exists(simple_results_path):
+            simple_df = pd.read_csv(simple_results_path)
             print("\n[Comparison with Simple Retriever]:")
             print(f"  Simple - Context Recall: {simple_df['context_recall'].mean():.3f}")
             print(f"  Advanced - Context Recall: {df_results['context_recall'].mean():.3f}")
-            print(f"  Improvement: {(df_results['context_recall'].mean() - simple_df['context_recall'].mean()):.3f}")
+            improvement = df_results['context_recall'].mean() - simple_df['context_recall'].mean()
+            print(f"  Improvement: {improvement:+.3f}")

@@ -11,10 +11,11 @@ from ragas import EvaluationDataset, evaluate, RunConfig
 from ragas.llms import LangchainLLMWrapper
 from ragas.embeddings import LangchainEmbeddingsWrapper
 from ragas.metrics import (
-    LLMContextRecall, 
-    Faithfulness, 
+    LLMContextRecall,
+    Faithfulness,
     FactualCorrectness,
-    # Removed the metrics that aren't available in your version
+    AnswerRelevancy,
+    ContextPrecision
 )
 from ragas.testset import TestsetGenerator
 from ragas.testset.synthesizers import (
@@ -24,7 +25,7 @@ from ragas.testset.synthesizers import (
 )
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langchain_community.document_loaders import PyMuPDFLoader
-from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_experimental.text_splitter import SemanticChunker
 import pandas as pd
 import sys
 import nest_asyncio
@@ -32,31 +33,35 @@ import nest_asyncio
 # Apply nest_asyncio FIRST
 nest_asyncio.apply()
 
-# Fix for Windows event loop issues  
+# Fix for Windows event loop issues
 if sys.platform == 'win32':
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-    
+
 load_dotenv()
 
-# ALIGNED CHUNK PARAMETERS - USE SAME EVERYWHERE
-CHUNK_SIZE = 800  # Aligned size
-CHUNK_OVERLAP = 200  # Aligned overlap
+# SEMANTIC CHUNKING PARAMETERS - ALIGNED WITH ADVANCED SYSTEM
+BREAKPOINT_THRESHOLD_TYPE = "percentile"
+BREAKPOINT_THRESHOLD_AMOUNT = 95  # Same as advanced system for fair comparison
 
 # Since you might not have simple_pdf_retriever.py working, let's create it inline
-def create_simple_pdf_retriever(pdf_path: str, chunk_size: int = CHUNK_SIZE, 
-                               chunk_overlap: int = CHUNK_OVERLAP, k: int = 10):
+def create_simple_pdf_retriever(
+    pdf_path: str,
+    breakpoint_threshold_type: str = BREAKPOINT_THRESHOLD_TYPE,
+    breakpoint_threshold_amount: int = BREAKPOINT_THRESHOLD_AMOUNT,
+    k: int = 10
+):
     """
-    Create a simple PDF retriever inline to avoid import issues.
+    Create a simple PDF retriever with SemanticChunker.
     """
     from langchain_community.vectorstores import Chroma
     from langchain_openai import OpenAIEmbeddings
-    
-    print(f"[Creating Retriever] chunk_size={chunk_size}, overlap={chunk_overlap}")
-    
+
+    print(f"[Creating Retriever] Using SemanticChunker with {breakpoint_threshold_type}={breakpoint_threshold_amount}")
+
     # Load PDF
     loader = PyMuPDFLoader(pdf_path)
     pages = loader.load()
-    
+
     # Add metadata
     for i, page in enumerate(pages):
         page.metadata.update({
@@ -64,24 +69,28 @@ def create_simple_pdf_retriever(pdf_path: str, chunk_size: int = CHUNK_SIZE,
             "source": pdf_path,
             "total_pages": len(pages)
         })
-    
-    # Split with aligned parameters
-    text_splitter = RecursiveCharacterTextSplitter(
-        chunk_size=chunk_size,
-        chunk_overlap=chunk_overlap,
-        length_function=len
-    )
-    chunks = text_splitter.split_documents(pages)
-    print(f"[Retriever] Created {len(chunks)} chunks from {len(pages)} pages")
-    
-    # Create vectorstore
+
+    # Split with SemanticChunker
     embeddings = OpenAIEmbeddings()
+    text_splitter = SemanticChunker(
+        embeddings,
+        breakpoint_threshold_type=breakpoint_threshold_type,
+        breakpoint_threshold_amount=breakpoint_threshold_amount
+    )
+
+    # Limit to first 20 pages for faster testing
+    pages_to_use = pages[:20]
+    print(f"[Using] First {len(pages_to_use)} pages for semantic chunking")
+    chunks = text_splitter.split_documents(pages_to_use)
+    print(f"[Retriever] Created {len(chunks)} semantic chunks from {len(pages_to_use)} pages")
+
+    # Create vectorstore
     vectorstore = Chroma.from_documents(
         documents=chunks,
         embedding=embeddings,
         collection_name="pdf_chunks"
     )
-    
+
     # Return as retriever
     return vectorstore.as_retriever(search_kwargs={"k": k})
 
@@ -101,23 +110,27 @@ def reset_eval_fields(dataset):
             row.response = None
             row.retrieved_contexts = []
 
-def evaluate_current_dataset(ds, evaluator_llm):
+def evaluate_current_dataset(ds, evaluator_llm, evaluator_embeddings):
     """
-    RAGAS evaluation with available metrics.
+    RAGAS evaluation with all required certification metrics.
+    Includes: Faithfulness, Context Recall, Context Precision, Answer Relevancy
     """
     evaluation_dataset = EvaluationDataset.from_pandas(ds.to_pandas())
-    
-    # Only use metrics that are available in your version
+
+    # All 4 required RAGAS metrics for certification
     metrics = [
         LLMContextRecall(),
         Faithfulness(),
-        FactualCorrectness()
+        ContextPrecision(),
+        AnswerRelevancy(),
+        FactualCorrectness()  # Bonus metric
     ]
-    
+
     return evaluate(
         dataset=evaluation_dataset,
         metrics=metrics,
         llm=evaluator_llm,
+        embeddings=evaluator_embeddings,
         run_config=RunConfig(timeout=360),
         raise_exceptions=False,
     )
@@ -138,14 +151,14 @@ class SimpleRetrieverChain:
         
         try:
             # Step 1: Direct retrieval from PDF
-            print(f"    → Retrieving for: {question[:50]}...")
+            print(f"    > Retrieving for: {question[:50]}...")
             raw_contexts = self.pdf_retriever.get_relevant_documents(question)
-            
+
             # Log retrieval details
-            print(f"    → Retrieved {len(raw_contexts)} documents")
+            print(f"    > Retrieved {len(raw_contexts)} documents")
             if raw_contexts:
-                print(f"    → First context preview: {raw_contexts[0].page_content[:100]}...")
-            
+                print(f"    > First context preview: {raw_contexts[0].page_content[:100]}...")
+
             # Step 2: Generate answer based on retrieved contexts
             context_text = "\n\n".join([
                 f"[Page {doc.metadata.get('page', 'Unknown')}]: {doc.page_content}"
@@ -170,24 +183,27 @@ Answer (be specific and use information from the context):"""
             }
             
         except Exception as e:
-            print(f"    → Error in retrieval: {e}")
+            print(f"    > Error in retrieval: {e}")
             return {
-                "response": f"Error: {str(e)}", 
+                "response": f"Error: {str(e)}",
                 "context": []
             }
 
-def load_and_chunk_pdf(pdf_path: str, chunk_size: int = CHUNK_SIZE, 
-                      chunk_overlap: int = CHUNK_OVERLAP):
+def load_and_chunk_pdf(
+    pdf_path: str,
+    breakpoint_threshold_type: str = BREAKPOINT_THRESHOLD_TYPE,
+    breakpoint_threshold_amount: int = BREAKPOINT_THRESHOLD_AMOUNT
+):
     """
-    Load PDF and create chunks for test generation with aligned parameters.
+    Load PDF and create semantic chunks for test generation.
     """
     print(f"[Loading] PDF: {pdf_path}")
-    print(f"[Parameters] chunk_size={chunk_size}, overlap={chunk_overlap}")
-    
+    print(f"[Parameters] Using SemanticChunker with {breakpoint_threshold_type}={breakpoint_threshold_amount}")
+
     # Load PDF
     loader = PyMuPDFLoader(pdf_path)
     pages = loader.load()
-    
+
     # Add metadata
     for i, page in enumerate(pages):
         page.metadata.update({
@@ -196,16 +212,21 @@ def load_and_chunk_pdf(pdf_path: str, chunk_size: int = CHUNK_SIZE,
             "author": "Kristen Long",
             "source_type": "pdf_fulltext"
         })
-    
-    # Split into chunks with aligned parameters
-    text_splitter = RecursiveCharacterTextSplitter(
-        chunk_size=chunk_size,
-        chunk_overlap=chunk_overlap,
-        length_function=len
+
+    # Split with SemanticChunker
+    embeddings = OpenAIEmbeddings()
+    text_splitter = SemanticChunker(
+        embeddings,
+        breakpoint_threshold_type=breakpoint_threshold_type,
+        breakpoint_threshold_amount=breakpoint_threshold_amount
     )
-    pdf_chunks = text_splitter.split_documents(pages)
-    
-    print(f"[Created] {len(pdf_chunks)} chunks from {len(pages)} pages")
+
+    # Limit to first 20 pages for faster testing
+    pages_to_use = pages[:20]
+    print(f"[Using] First {len(pages_to_use)} pages for test generation")
+    pdf_chunks = text_splitter.split_documents(pages_to_use)
+
+    print(f"[Created] {len(pdf_chunks)} semantic chunks from {len(pages_to_use)} pages")
     return pdf_chunks
 
 def generate_test_questions(pdf_chunks, testset_size: int = 20, use_multiHop: bool = False):
@@ -268,37 +289,38 @@ def test_retriever_directly(pdf_retriever, test_questions: List[str]):
 def run_full_evaluation_pipeline(
     pdf_path: str,
     testset_size: int = 10,
-    chunk_size: int = CHUNK_SIZE,
-    chunk_overlap: int = CHUNK_OVERLAP,
+    breakpoint_threshold_type: str = BREAKPOINT_THRESHOLD_TYPE,
+    breakpoint_threshold_amount: int = BREAKPOINT_THRESHOLD_AMOUNT,
     use_multiHop: bool = False
 ):
     """
-    Complete pipeline with aligned parameters and diagnostics.
+    Complete pipeline with semantic chunking and diagnostics.
     """
     print("="*70)
-    print("RAGAS EVALUATION - SIMPLE RETRIEVER")
+    print("RAGAS EVALUATION - SIMPLE RETRIEVER WITH SEMANTIC CHUNKING")
     print("="*70)
     print(f"Configuration:")
-    print(f"  - Chunk Size: {chunk_size}")
-    print(f"  - Chunk Overlap: {chunk_overlap}")
+    print(f"  - Chunking Strategy: SemanticChunker")
+    print(f"  - Threshold Type: {breakpoint_threshold_type}")
+    print(f"  - Threshold Amount: {breakpoint_threshold_amount}")
     print(f"  - Test Set Size: {testset_size}")
     print(f"  - Multi-hop: {use_multiHop}")
     print("="*70)
-    
-    # Step 1: Load and chunk PDF with aligned parameters
-    pdf_chunks = load_and_chunk_pdf(pdf_path, chunk_size, chunk_overlap)
-    
+
+    # Step 1: Load and chunk PDF with semantic chunker
+    pdf_chunks = load_and_chunk_pdf(pdf_path, breakpoint_threshold_type, breakpoint_threshold_amount)
+
     # Step 2: Generate test questions
     test_dataset = generate_test_questions(pdf_chunks, testset_size, use_multiHop)
-    
+
     # Convert to pandas
     df_questions = test_dataset.to_pandas()
     print(f"\n[Sample Questions Generated]:")
     for i, row in df_questions.head(5).iterrows():
         print(f"  {i+1}. {row['user_input'][:80]}...")
-    
-    # Step 3: Initialize retriever with aligned parameters
-    pdf_retriever = create_simple_pdf_retriever(pdf_path, chunk_size, chunk_overlap, k=10)
+
+    # Step 3: Initialize retriever with semantic chunker
+    pdf_retriever = create_simple_pdf_retriever(pdf_path, breakpoint_threshold_type, breakpoint_threshold_amount, k=10)
     
     # Test retriever directly first
     test_questions = [
@@ -312,10 +334,11 @@ def run_full_evaluation_pipeline(
     print("\n[Mode] Using Simple Retriever Chain (no agent routing)")
     chain = SimpleRetrieverChain(pdf_retriever)
     
-    # Step 5: Initialize evaluator LLM
+    # Step 5: Initialize evaluator LLM and embeddings
     chat_model = ChatOpenAI(model="gpt-4o-mini", temperature=0)
     evaluator_llm = LangchainLLMWrapper(chat_model)
-    
+    evaluator_embeddings = LangchainEmbeddingsWrapper(OpenAIEmbeddings())
+
     # Step 6: Prepare dataset for evaluation
     dataset = EvaluationDataset.from_pandas(df_questions)
     reset_eval_fields(dataset)
@@ -345,11 +368,11 @@ def run_full_evaluation_pipeline(
             print(f"  - First context sample: {row.retrieved_contexts[0][:80]}...")
     
     print("-"*70)
-    
+
     # Step 8: Evaluate using RAGAS
     print("\n[Evaluating] Running RAGAS metrics...")
-    results = evaluate_current_dataset(dataset, evaluator_llm)
-    
+    results = evaluate_current_dataset(dataset, evaluator_llm, evaluator_embeddings)
+
     return results, df_questions
 
 # Main execution
@@ -357,13 +380,13 @@ if __name__ == "__main__":
     # Configuration
     PDF_PATH = "book_research/data/thief_of_sorrows.pdf"
     TESTSET_SIZE = 5  # Start small for testing
-    
-    # Run the complete pipeline
+
+    # Run the complete pipeline with semantic chunking
     results, questions_df = run_full_evaluation_pipeline(
         pdf_path=PDF_PATH,
         testset_size=TESTSET_SIZE,
-        chunk_size=CHUNK_SIZE,
-        chunk_overlap=CHUNK_OVERLAP,
+        breakpoint_threshold_type=BREAKPOINT_THRESHOLD_TYPE,
+        breakpoint_threshold_amount=BREAKPOINT_THRESHOLD_AMOUNT,
         use_multiHop=False
     )
     
@@ -378,8 +401,14 @@ if __name__ == "__main__":
         
         # Calculate averages
         print("\n[Average Scores]:")
-        metrics = ['context_recall', 'faithfulness', 'factual_correctness(mode=f1)']
-        
+        metrics = [
+            'faithfulness',
+            'context_recall',
+            'context_precision',
+            'answer_relevancy',
+            'factual_correctness(mode=f1)'
+        ]
+
         for metric in metrics:
             if metric in df_results.columns:
                 avg_score = df_results[metric].mean()

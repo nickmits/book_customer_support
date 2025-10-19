@@ -311,8 +311,8 @@ def initialize_retrievers():
         print("[WARNING] Retrieval dependencies not available")
         return None, None
 
-    try:     
-        from langchain_text_splitters import RecursiveCharacterTextSplitter
+    try:
+        from langchain_experimental.text_splitter import SemanticChunker
 
         # Get API keys from environment
         openai_api_key = os.getenv("OPENAI_API_KEY")
@@ -397,17 +397,17 @@ Subjects: {row['subjects']}
                     "page": i + 1  # Add for compatibility
                 })
 
-            # CRITICAL CHANGE: Split ALL pages into proper chunks
-            text_splitter = RecursiveCharacterTextSplitter(
-                chunk_size=800,  
-                chunk_overlap=200,  # Or 100 for less overlap
-                length_function=len,
-                separators=["\n\n", "\n", " ", ""]  
+            # SEMANTIC CHUNKING: Split based on semantic similarity for better thematic coherence
+            print(f"[INFO] Using SemanticChunker for optimal semantic boundaries...")
+            text_splitter = SemanticChunker(
+                embedding_model,  # Uses the same OpenAI embeddings already initialized
+                breakpoint_threshold_type="percentile",  # Splits at significant semantic shifts
+                breakpoint_threshold_amount=95  # 95th percentile - moderate sensitivity
             )
-            
-            # Split ALL pages, not just first 5
+
+            # Split ALL pages using semantic boundaries
             pdf_chunks = text_splitter.split_documents(pdf_pages)
-            print(f"[INFO] Created {len(pdf_chunks)} chunks from {len(pdf_pages)} pages")
+            print(f"[INFO] Created {len(pdf_chunks)} semantic chunks from {len(pdf_pages)} pages")
             
             # Optional: Limit chunks for memory/performance (but use more than 5!)
             # pdf_chunks = pdf_chunks[:100]  # Use first 100 chunks if needed

@@ -311,8 +311,8 @@ def initialize_retrievers():
         print("[WARNING] Retrieval dependencies not available")
         return None, None
 
-    try:
-        print("[INIT] Initializing retrievers...")
+    try:     
+        from langchain_text_splitters import RecursiveCharacterTextSplitter
 
         # Get API keys from environment
         openai_api_key = os.getenv("OPENAI_API_KEY")
@@ -336,7 +336,7 @@ def initialize_retrievers():
         )
 
         # ============================================================================
-        # Load CSV Data (Book Catalog)
+        # Load CSV Data (Book Catalog) - Keep this as is
         # ============================================================================
         csv_path = "book_research/data/space_exploration_books.csv"
         if not os.path.exists(csv_path):
@@ -370,7 +370,7 @@ Subjects: {row['subjects']}
                 csv_documents.append(doc)
 
         # ============================================================================
-        # Load PDF Data (extract metadata from file)
+        # Load PDF Data with PROPER CHUNKING
         # ============================================================================
         pdf_path = "book_research/data/thief_of_sorrows.pdf"
         if not os.path.exists(pdf_path):
@@ -394,13 +394,26 @@ Subjects: {row['subjects']}
                     "has_full_text": True,
                     "page_number": i + 1,
                     "total_pages": len(pdf_pages),
+                    "page": i + 1  # Add for compatibility
                 })
 
-            # Use first 5 pages for faster loading (adjust as needed)
-            pdf_chunks = pdf_pages[:5]
+            # CRITICAL CHANGE: Split ALL pages into proper chunks
+            text_splitter = RecursiveCharacterTextSplitter(
+                chunk_size=800,  
+                chunk_overlap=200,  # Or 100 for less overlap
+                length_function=len,
+                separators=["\n\n", "\n", " ", ""]  
+            )
+            
+            # Split ALL pages, not just first 5
+            pdf_chunks = text_splitter.split_documents(pdf_pages)
+            print(f"[INFO] Created {len(pdf_chunks)} chunks from {len(pdf_pages)} pages")
+            
+            # Optional: Limit chunks for memory/performance (but use more than 5!)
+            # pdf_chunks = pdf_chunks[:100]  # Use first 100 chunks if needed
 
         # ============================================================================
-        # Create CSV Retriever
+        # Create CSV Retriever - Keep this as is
         # ============================================================================
         if csv_documents:
             print("[INIT] Building CSV retriever...")
@@ -441,10 +454,10 @@ Subjects: {row['subjects']}
             csv_retriever = None
 
         # ============================================================================
-        # Create PDF Retriever
+        # Create PDF Retriever with chunked documents
         # ============================================================================
         if pdf_chunks:
-            print("[INIT] Building PDF retriever...")
+            print(f"[INIT] Building PDF retriever with {len(pdf_chunks)} chunks...")
             pdf_vectorstore = Qdrant.from_documents(
                 documents=pdf_chunks,
                 embedding=embedding_model,
@@ -453,10 +466,10 @@ Subjects: {row['subjects']}
             )
 
             pdf_bm25 = BM25Retriever.from_documents(pdf_chunks)
-            pdf_bm25.k = 5
+            pdf_bm25.k = 10  # Increase k since we have more chunks
 
             pdf_multi_query = MultiQueryRetriever.from_llm(
-                retriever=pdf_vectorstore.as_retriever(search_kwargs={"k": 10}),
+                retriever=pdf_vectorstore.as_retriever(search_kwargs={"k": 15}),  # More results
                 llm=chat_model
             )
 
@@ -468,15 +481,15 @@ Subjects: {row['subjects']}
                 )
                 pdf_retriever = EnsembleRetriever(
                     retrievers=[pdf_bm25, pdf_multi_query, pdf_compression],
-                    weights=[0.2, 0.3, 0.5]
+                    weights=[0.3, 0.3, 0.4]
                 )
             else:
                 pdf_retriever = EnsembleRetriever(
                     retrievers=[pdf_bm25, pdf_multi_query],
-                    weights=[0.4, 0.6]
+                    weights=[0.5, 0.5]
                 )
 
-            print("[OK] PDF retriever created")
+            print(f"[OK] PDF retriever created with {len(pdf_chunks)} chunks")
         else:
             print("[WARNING] No PDF documents loaded")
             pdf_retriever = None
@@ -488,7 +501,6 @@ Subjects: {row['subjects']}
         import traceback
         traceback.print_exc()
         return None, None
-
 
 # ============================================================================
 # UTILITY FUNCTIONS

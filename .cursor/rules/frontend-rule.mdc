@@ -1,0 +1,310 @@
+---
+alwaysApply: true
+---
+
+# Bookstore Customer Support Frontend Rules
+
+## Project Overview
+A simple, elegant chat application for bookstore customer support where users can ask about books and PDF information. The UI should evoke a warm, literary atmosphere reminiscent of a cozy bookstore.
+
+## Technology Stack
+- **Framework**: React 18+ with TypeScript
+- **UI Library**: Material UI (MUI) v6 (latest)
+- **Testing**: Vitest + React Testing Library
+- **Build Tool**: Vite
+- **Package Manager**: npm or pnpm
+
+## Design Aesthetic - Bookstore Theme
+- **Color Palette**:
+  - Primary: Warm browns, sepia tones, coffee colors (#8B4513, #A0826D, #D2B48C)
+  - Secondary: Deep burgundy/maroon for accents (#800020, #722F37)
+  - Background: Cream, parchment, soft beige (#F5F5DC, #FAF0E6, #FFF8DC)
+  - Text: Dark brown, charcoal for readability (#3E2723, #4E342E)
+- **Typography**:
+  - Use serif fonts for headers (Georgia, Merriweather, or Playfair Display)
+  - Sans-serif for body/chat text (Open Sans, Lato) for readability
+- **Visual Elements**:
+  - Subtle book-related icons (open books, bookmarks, reading glasses)
+  - Gentle shadows and borders resembling book pages
+  - Rounded corners for a friendly, approachable feel
+  - Optional: Subtle texture overlays (paper, wood grain)
+
+## Project Structure
+```
+src/
+├── components/
+│   ├── chat/
+│   │   ├── ChatContainer.tsx
+│   │   ├── ChatMessage.tsx
+│   │   ├── ChatInput.tsx
+│   │   └── MessageList.tsx
+│   ├── common/
+│   │   ├── Header.tsx
+│   │   ├── Footer.tsx
+│   │   └── LoadingSpinner.tsx
+│   └── layout/
+│       └── MainLayout.tsx
+├── hooks/
+│   ├── useChat.ts
+│   └── useWebSocket.ts (if needed)
+├── theme/
+│   ├── theme.ts
+│   └── customComponents.ts
+├── types/
+│   ├── chat.types.ts
+│   └── index.ts
+├── services/
+│   └── api.ts
+├── utils/
+│   └── helpers.ts
+├── __tests__/
+│   ├── components/
+│   └── hooks/
+├── App.tsx
+└── main.tsx
+```
+
+## Component Development Guidelines
+
+### TypeScript Best Practices
+- Use strict TypeScript configuration
+- Define interfaces for all props and state
+- Avoid `any` type - use `unknown` if type is truly unknown
+- Use proper typing for events, refs, and hooks
+- Export types from component files for reusability
+
+```typescript
+// Example
+interface ChatMessageProps {
+  message: string;
+  sender: 'user' | 'assistant';
+  timestamp: Date;
+  id: string;
+}
+
+export const ChatMessage: React.FC<ChatMessageProps> = ({ message, sender, timestamp, id }) => {
+  // Implementation
+};
+```
+
+### Component Structure
+- Use functional components with hooks
+- Keep components small and focused (Single Responsibility)
+- Extract reusable logic into custom hooks
+- Use composition over prop drilling
+- Implement proper error boundaries
+
+### State Management
+- Use React Context for global state (theme, user session)
+- useState for local component state
+- Consider useReducer for complex state logic
+- Keep state as close to where it's used as possible
+
+## Material UI Guidelines
+
+### Theme Configuration
+- Create a custom MUI theme in `src/theme/theme.ts`
+- Override default component styles to match bookstore aesthetic
+- Use theme breakpoints for responsive design
+- Define consistent spacing using theme spacing units
+
+```typescript
+// Example theme setup
+import { createTheme } from '@mui/material/styles';
+
+export const bookstoreTheme = createTheme({
+  palette: {
+    primary: {
+      main: '#8B4513',
+      light: '#A0826D',
+      dark: '#654321',
+    },
+    secondary: {
+      main: '#800020',
+    },
+    background: {
+      default: '#FAF0E6',
+      paper: '#FFF8DC',
+    },
+    text: {
+      primary: '#3E2723',
+      secondary: '#4E342E',
+    },
+  },
+  typography: {
+    fontFamily: '"Open Sans", "Helvetica", "Arial", sans-serif',
+    h1: { fontFamily: '"Playfair Display", "Georgia", serif' },
+    h2: { fontFamily: '"Playfair Display", "Georgia", serif' },
+    // ... other heading styles
+  },
+  shape: {
+    borderRadius: 8,
+  },
+});
+```
+
+### Component Usage
+- Use MUI components as base, customize with `sx` prop or styled-components
+- Prefer `sx` prop for one-off styling
+- Use `styled()` API for reusable styled components
+- Leverage MUI's Grid2 or Stack for layouts
+- Use Paper component for card-like elements
+
+## Chat Application Specific Rules
+
+### Chat Interface
+- Display messages in a clean, scrollable list
+- Differentiate user and assistant messages (alignment, color, style)
+- Show timestamps subtly
+- Auto-scroll to latest message
+- Show typing indicators when assistant is responding
+- Handle loading states gracefully
+
+### User Experience
+- Keep interface minimal and distraction-free
+- Provide clear visual feedback for user actions
+- Handle error states with friendly, bookstore-themed messages
+- Ensure keyboard navigation works properly
+- Add smooth animations for message appearance
+
+### Message Handling
+- Sanitize and validate user input
+- Format messages with proper line breaks
+- Support basic markdown if needed (book titles, authors)
+- Handle long messages with proper wrapping
+- Show message status (sent, delivered, error)
+
+## Testing Guidelines
+
+### Vitest Configuration
+- Configure Vitest in `vite.config.ts`
+- Set up jsdom environment for component testing
+- Use React Testing Library for component tests
+- Aim for >80% code coverage
+
+### Testing Practices
+- Write tests for all components
+- Test user interactions and edge cases
+- Mock API calls and external dependencies
+- Use `describe` blocks to organize tests
+- Test accessibility features
+
+```typescript
+// Example test
+import { render, screen } from '@testing-library/react';
+import { describe, it, expect } from 'vitest';
+import { ChatMessage } from './ChatMessage';
+
+describe('ChatMessage', () => {
+  it('renders user message correctly', () => {
+    render(
+      <ChatMessage
+        message="Hello"
+        sender="user"
+        timestamp={new Date()}
+        id="1"
+      />
+    );
+    expect(screen.getByText('Hello')).toBeInTheDocument();
+  });
+});
+```
+
+## Accessibility (a11y)
+- Use semantic HTML elements
+- Provide ARIA labels for interactive elements
+- Ensure keyboard navigation works
+- Maintain proper color contrast ratios (WCAG AA minimum)
+- Test with screen readers
+- Add focus indicators
+
+## Performance
+- Lazy load components where appropriate
+- Memoize expensive computations with useMemo
+- Use React.memo for pure components
+- Optimize re-renders with useCallback
+- Keep bundle size minimal
+
+## Code Quality
+- Use ESLint with React and TypeScript rules
+- Format code with Prettier
+- Follow consistent naming conventions:
+  - PascalCase for components
+  - camelCase for functions, variables, hooks
+  - UPPER_CASE for constants
+- Write descriptive comments for complex logic
+- Keep functions small and focused
+
+## Responsive Design
+- Mobile-first approach
+- Use MUI breakpoints: xs, sm, md, lg, xl
+- Test on multiple screen sizes
+- Ensure chat is usable on mobile devices
+- Consider landscape orientation on mobile
+
+## Integration with Backend
+- Connect to Python backend API
+- Handle WebSocket connections for real-time chat (if applicable)
+- Implement proper error handling for API calls
+- Show loading states during API requests
+- Handle offline scenarios gracefully
+
+## File Naming Conventions
+- Components: `PascalCase.tsx` (e.g., `ChatContainer.tsx`)
+- Hooks: `camelCase.ts` with `use` prefix (e.g., `useChat.ts`)
+- Types: `camelCase.types.ts` (e.g., `chat.types.ts`)
+- Tests: `*.test.tsx` or `*.test.ts`
+- Utils: `camelCase.ts`
+
+## Git Workflow
+- Follow the gitflow-rule.mdc for branching and commits
+- Write descriptive commit messages
+- Keep commits atomic and focused
+
+## Documentation
+- Add JSDoc comments for public APIs
+- Document complex logic
+- Maintain README with setup instructions
+- Document component props with TypeScript interfaces
+
+## Dependencies to Include
+```json
+{
+  "dependencies": {
+    "react": "^18.3.0",
+    "@mui/material": "^6.0.0",
+    "@mui/icons-material": "^6.0.0",
+    "@emotion/react": "^11.13.0",
+    "@emotion/styled": "^11.13.0",
+    "axios": "^1.7.0"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.0",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^4.3.0",
+    "vite": "^5.4.0",
+    "vitest": "^2.0.0",
+    "@testing-library/react": "^16.0.0",
+    "@testing-library/jest-dom": "^6.5.0",
+    "@testing-library/user-event": "^14.5.0",
+    "typescript": "^5.5.0",
+    "eslint": "^9.0.0",
+    "prettier": "^3.3.0"
+  }
+}
+```
+
+## Key Principles
+1. **Simplicity**: Keep the UI clean and focused on chat functionality
+2. **Literary Warmth**: Every design choice should evoke a cozy bookstore atmosphere
+3. **Usability**: Prioritize user experience and accessibility
+4. **Type Safety**: Leverage TypeScript for robust, maintainable code
+5. **Testability**: Write code that's easy to test
+6. **Performance**: Keep the app fast and responsive
+
+## Example Chat Message Styling
+```typescript
+// User message: aligned right, warm brown background
+// Assistant message: aligned left, cream/parchment background with subtle shadow
+// Both: book-page-like appearance with rounded corners and soft shadows
+```

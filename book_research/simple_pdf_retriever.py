@@ -49,7 +49,6 @@ class SimplePDFRetriever:
             collection_name=self.collection_name
         )
         
-        # Create retriever using your pattern
         self.retriever = pdf_vectorstore.as_retriever(search_kwargs={"k": k})
         
         print(f"[OK] PDF retriever ready!")
@@ -80,7 +79,6 @@ def create_simple_pdf_retriever(pdf_path: str, k: int = 10):
     return SimplePDFRetriever(pdf_path, openai_api_key).initialize(k)
 
 
-# Example usage
 if __name__ == "__main__":
     retriever = create_simple_pdf_retriever("book_research/data/thief_of_sorrows.pdf")
     results = retriever.search("What happens in chapter 2?", k=3)

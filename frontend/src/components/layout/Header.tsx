@@ -16,10 +16,10 @@ export const Header: React.FC = () => {
         <MenuBookIcon sx={{ mr: 2, fontSize: 32 }} />
         <Box sx={{ textAlign: 'center',  }}>
           <Typography variant="h5" component="h1" sx={{ fontWeight: 600 }}>
-            Bookstore Mitselou AI
+            Nick Mits
           </Typography>
           <Typography variant="caption" sx={{ opacity: 0.9 }}>
-            Your literary companion
+           Customer Support Chatbot
           </Typography>
         </Box>
       </Toolbar>

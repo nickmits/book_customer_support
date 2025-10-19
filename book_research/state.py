@@ -6,7 +6,6 @@ from pydantic import BaseModel, Field
 from typing import TypedDict, Optional, Annotated
 from langgraph.graph import add_messages
 
-# Custom reducer for merging dictionaries
 def merge_dicts(left: dict | None, right: dict | None) -> dict:
     """Merge two dictionaries, with right taking precedence."""
     if left is None:
@@ -16,7 +15,6 @@ def merge_dicts(left: dict | None, right: dict | None) -> dict:
     return {**left, **right}
 
 
-# Structured outputs for tool calling
 class ClarifyWithUser(BaseModel):
     """Structured output for clarifying user needs."""
 
@@ -67,19 +65,16 @@ class SearchComplete(BaseModel):
     )
 
 
-# Main agent state
 class AgentState(TypedDict):
     messages: Annotated[list, add_messages]
     book_request: Optional[BookRequest]
     search_results: dict
     final_response: str
     
-    # New fields for loop support
-    search_iterations: int  # Track search attempts
-    post_revisions: int     # Track post revision attempts
-    satisfaction_status: Optional[dict]  # Store satisfaction evaluation
+    search_iterations: int 
+    post_revisions: int   
+    satisfaction_status: Optional[dict] 
 
-# Search subgraph state
 class SearchState(TypedDict):
     """State for the book search subgraph."""
 

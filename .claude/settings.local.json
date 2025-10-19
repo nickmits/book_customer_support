@@ -1,28 +1,7 @@
 {
   "permissions": {
     "allow": [
-      "Bash(findstr \"LISTENING\")",
-      "Bash(taskkill /F /PID 50660)",
-      "Bash(cmd.exe /c \"taskkill /F /PID 50660\")",
-      "Bash(python -c \"import os; os.system(''taskkill /F /PID 50660'')\")",
-      "Bash(curl -s http://localhost:8000/ai-agent -X POST -H \"Content-Type: application/json\" -d \"{\"\"query\"\": \"\"Tell me about Thief of Sorrows\"\", \"\"request_type\"\": \"\"specific_book\"\"}\")",
-      "Bash(python -c \"import sys, json; data=json.load(sys.stdin); print(''''Mode:'''', data[''''search_results''''][''''mode'''']); print(''''Agent Available:'''', data[''''search_results''''][''''agent_available'''']); print(''''Search Target:'''', data[''''search_results''''].get(''''search_target'''', ''''N/A''''))\")",
-      "Bash(pip install rank_bm25)",
-      "Bash(npm run dev)",
-      "Bash(netstat -ano)",
-      "Bash(findstr \":8000\")",
-      "Bash(taskkill /F /PID 27212)",
-      "Bash(cmd.exe /c \"taskkill /F /PID 27212\")",
-      "Bash(python -c \"import os; os.system(''taskkill /F /PID 27212'')\")",
-      "Bash(python main.py)",
-      "Bash(taskkill /F /PID 43424)",
-      "Bash(cmd.exe /c \"taskkill /F /PID 43424\")",
-      "Bash(python -c \"import os; os.system(''taskkill /F /PID 43424'')\")",
-      "Bash(taskkill /F /PID 36748)",
-      "Bash(cmd.exe /c \"taskkill /F /PID 36748\")",
-      "Bash(python -c \"import os; os.system(''taskkill /F /PID 36748'')\")",
-      "Bash(timeout /t 3)",
-      "Bash(python test_simple_retriever.py)"
+      "Bash(python -c \"\nimport pandas as pd\n\n# Read both CSV files\nsimple = pd.read_csv(''evaluation/simple_retrieval_results.csv'')\nadvanced = pd.read_csv(''evaluation/advanced_retrieval_results.csv'')\n\n# Calculate mean for each metric\nmetrics = [''context_recall'', ''faithfulness'', ''context_precision'', ''answer_relevancy'', ''factual_correctness(mode=f1)'']\n\n# Create comparison data\ndata = []\nfor metric in metrics:\n    simple_val = simple[metric].mean()\n    advanced_val = advanced[metric].mean()\n    diff = advanced_val - simple_val\n    winner = ''Advanced'' if diff > 0 else ''Simple''\n    data.append({\n        ''Metric'': metric,\n        ''Simple'': f''{simple_val:.4f}'',\n        ''Advanced'': f''{advanced_val:.4f}'',\n        ''Difference'': f''{diff:+.4f}'',\n        ''Winner'': winner\n    })\n\n# Add overall average\nsimple_avg = simple[metrics].mean().mean()\nadvanced_avg = advanced[metrics].mean().mean()\ndiff_avg = advanced_avg - simple_avg\nwinner_avg = ''Advanced'' if diff_avg > 0 else ''Simple''\ndata.append({\n    ''Metric'': ''OVERALL AVERAGE'',\n    ''Simple'': f''{simple_avg:.4f}'',\n    ''Advanced'': f''{advanced_avg:.4f}'',\n    ''Difference'': f''{diff_avg:+.4f}'',\n    ''Winner'': winner_avg\n})\n\n# Create DataFrame and print\ndf = pd.DataFrame(data)\nprint(df.to_string(index=False))\n\")"
     ],
     "deny": [],
     "ask": []

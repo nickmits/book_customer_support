@@ -328,7 +328,7 @@ Four retrieval approaches were evaluated:
 ### Key Takeaways
 
 **Evaluation-Driven Optimization:**
-> "Evaluation frameworks like RAGAS provide quantitative guidance for optimization, but real-world system design requires balancing multiple constraints including performance, reliability, cost, and user experience. The 'best' system is one that actually works for your customers while delivering measurable quality improvements."
+> "Evaluation frameworks like RAGAS provide quantitative guidance for optimization, but real-world system design requires balancing multiple constraints including performance, reliability, cost, and user experience. The 'best' system is one that actually works for the customers while delivering measurable quality improvements."
 
 **Production vs Benchmark:**
 > "After rigorous RAGAS evaluation of 4 retrieval approaches, I implemented Advanced Recursive Retrieval with Ensemble methods, achieving a 13.1% quality improvement over the baseline while maintaining production reliability. The system demonstrates dramatically better context recall (+66.7%) and precision (+113.3%), proving that evaluation-driven optimization delivers measurable business value."

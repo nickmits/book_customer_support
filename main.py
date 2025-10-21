@@ -304,7 +304,13 @@ def extract_pdf_metadata(pdf_path: str) -> dict:
 # ============================================================================
 
 def initialize_retrievers():
-    """Initialize CSV and PDF retrievers for the agent."""
+    """
+    Initialize CSV and PDF retrievers for the agent.
+    Uses OPTIMIZED Simple Vector Retrieval with Fast Recursive Chunking
+    - Simple vector search (no complex ensemble) for speed
+    - RecursiveCharacterTextSplitter for instant startup
+    - Better performance than original while being production-ready
+    """
     global csv_retriever, pdf_retriever
 
     if not RETRIEVAL_AVAILABLE or not AGENT_AVAILABLE:
@@ -312,31 +318,26 @@ def initialize_retrievers():
         return None, None
 
     try:
-        from langchain_experimental.text_splitter import SemanticChunker
+        from langchain.text_splitter import RecursiveCharacterTextSplitter
 
         # Get API keys from environment
         openai_api_key = os.getenv("OPENAI_API_KEY")
-        cohere_api_key = os.getenv("COHERE_API_KEY")
 
         if not openai_api_key:
             print("[ERROR] OPENAI_API_KEY not found in environment")
             return None, None
 
-        # Initialize models
-        chat_model = init_chat_model(
-            model="openai:gpt-4o-mini",
-            api_key=openai_api_key,
-            temperature=0.1,
-            max_tokens=1000
-        )
-
+        # Initialize embedding model
         embedding_model = OpenAIEmbeddings(
             model="text-embedding-3-small",
             api_key=openai_api_key
         )
 
+        print("[PERFORMANCE] Using OPTIMIZED retrieval: Simple Vector + Fast Chunking")
+        print("[INFO] Fast startup, no timeout, good performance")
+
         # ============================================================================
-        # Load CSV Data (Book Catalog) - Keep this as is
+        # Load CSV Data (Book Catalog) - Simple vector search
         # ============================================================================
         csv_path = "book_research/data/space_exploration_books.csv"
         if not os.path.exists(csv_path):
@@ -370,7 +371,7 @@ Subjects: {row['subjects']}
                 csv_documents.append(doc)
 
         # ============================================================================
-        # Load PDF Data with PROPER CHUNKING
+        # Load PDF Data with FAST RECURSIVE CHUNKING (Production Ready!)
         # ============================================================================
         pdf_path = "book_research/data/thief_of_sorrows.pdf"
         if not os.path.exists(pdf_path):
@@ -394,29 +395,27 @@ Subjects: {row['subjects']}
                     "has_full_text": True,
                     "page_number": i + 1,
                     "total_pages": len(pdf_pages),
-                    "page": i + 1  # Add for compatibility
+                    "page": i + 1
                 })
 
-            # SEMANTIC CHUNKING: Split based on semantic similarity for better thematic coherence
-            print(f"[INFO] Using SemanticChunker for optimal semantic boundaries...")
-            text_splitter = SemanticChunker(
-                embedding_model,  # Uses the same OpenAI embeddings already initialized
-                breakpoint_threshold_type="percentile",  # Splits at significant semantic shifts
-                breakpoint_threshold_amount=95  # 95th percentile - moderate sensitivity
+            # FAST RECURSIVE CHUNKING: Instant startup, production-ready
+            print(f"[INFO] Using RecursiveCharacterTextSplitter (fast & reliable)...")
+            text_splitter = RecursiveCharacterTextSplitter(
+                chunk_size=1000,
+                chunk_overlap=200,
+                length_function=len,
+                is_separator_regex=False
             )
 
-            # Split ALL pages using semantic boundaries
+            # Split pages - this is instant compared to SemanticChunker
             pdf_chunks = text_splitter.split_documents(pdf_pages)
-            print(f"[INFO] Created {len(pdf_chunks)} semantic chunks from {len(pdf_pages)} pages")
-            
-            # Optional: Limit chunks for memory/performance (but use more than 5!)
-            # pdf_chunks = pdf_chunks[:100]  # Use first 100 chunks if needed
+            print(f"[INFO] Created {len(pdf_chunks)} chunks from {len(pdf_pages)} pages (FAST)")
 
         # ============================================================================
-        # Create CSV Retriever - Keep this as is
+        # Create SIMPLE CSV Retriever (Basic Vector Search - Fast & Reliable)
         # ============================================================================
         if csv_documents:
-            print("[INIT] Building CSV retriever...")
+            print("[INIT] Building simple CSV retriever (vector search only)...")
             csv_vectorstore = Qdrant.from_documents(
                 documents=csv_documents,
                 embedding=embedding_model,
@@ -424,40 +423,18 @@ Subjects: {row['subjects']}
                 collection_name="csv_catalog"
             )
 
-            csv_bm25 = BM25Retriever.from_documents(csv_documents)
-            csv_bm25.k = 5
-
-            csv_multi_query = MultiQueryRetriever.from_llm(
-                retriever=csv_vectorstore.as_retriever(search_kwargs={"k": 10}),
-                llm=chat_model
-            )
-
-            # Cohere reranking (optional if API key available)
-            if cohere_api_key:
-                csv_compression = ContextualCompressionRetriever(
-                    base_retriever=csv_multi_query,
-                    base_compressor=CohereRerank(model="rerank-v3.5", cohere_api_key=cohere_api_key)
-                )
-                csv_retriever = EnsembleRetriever(
-                    retrievers=[csv_bm25, csv_multi_query, csv_compression],
-                    weights=[0.2, 0.3, 0.5]
-                )
-            else:
-                csv_retriever = EnsembleRetriever(
-                    retrievers=[csv_bm25, csv_multi_query],
-                    weights=[0.4, 0.6]
-                )
-
-            print("[OK] CSV retriever created")
+            # Simple retriever - no complex ensemble, just vector search
+            csv_retriever = csv_vectorstore.as_retriever(search_kwargs={"k": 10})
+            print("[OK] CSV retriever created (simple vector search)")
         else:
             print("[WARNING] No CSV documents loaded")
             csv_retriever = None
 
         # ============================================================================
-        # Create PDF Retriever with chunked documents
+        # Create SIMPLE PDF Retriever (Basic Vector Search - FAST & GOOD)
         # ============================================================================
         if pdf_chunks:
-            print(f"[INIT] Building PDF retriever with {len(pdf_chunks)} chunks...")
+            print(f"[INIT] Building simple PDF retriever with {len(pdf_chunks)} chunks...")
             pdf_vectorstore = Qdrant.from_documents(
                 documents=pdf_chunks,
                 embedding=embedding_model,
@@ -465,31 +442,9 @@ Subjects: {row['subjects']}
                 collection_name="pdf_fulltext"
             )
 
-            pdf_bm25 = BM25Retriever.from_documents(pdf_chunks)
-            pdf_bm25.k = 10  # Increase k since we have more chunks
-
-            pdf_multi_query = MultiQueryRetriever.from_llm(
-                retriever=pdf_vectorstore.as_retriever(search_kwargs={"k": 15}),  # More results
-                llm=chat_model
-            )
-
-            # Cohere reranking (optional if API key available)
-            if cohere_api_key:
-                pdf_compression = ContextualCompressionRetriever(
-                    base_retriever=pdf_multi_query,
-                    base_compressor=CohereRerank(model="rerank-v3.5", cohere_api_key=cohere_api_key)
-                )
-                pdf_retriever = EnsembleRetriever(
-                    retrievers=[pdf_bm25, pdf_multi_query, pdf_compression],
-                    weights=[0.3, 0.3, 0.4]
-                )
-            else:
-                pdf_retriever = EnsembleRetriever(
-                    retrievers=[pdf_bm25, pdf_multi_query],
-                    weights=[0.5, 0.5]
-                )
-
-            print(f"[OK] PDF retriever created with {len(pdf_chunks)} chunks")
+            # Simple retriever - fast vector search, no complex pipelines
+            pdf_retriever = pdf_vectorstore.as_retriever(search_kwargs={"k": 10})
+            print(f"[OK] PDF retriever created (simple vector - production ready)")
         else:
             print("[WARNING] No PDF documents loaded")
             pdf_retriever = None
@@ -635,9 +590,14 @@ async def initialize_ai_agent():
         print("[WARNING] Agent not available - using fallback")
         return None
 
+    # If agent was pre-initialized on startup, just return it
+    if book_agent is not None:
+        return book_agent
+
+    # Otherwise, initialize it now (fallback for edge cases)
     if book_agent is None:
         try:
-            print("[AGENT] Initializing advanced AI agent...")
+            print("[AGENT] Initializing AI agent (not pre-initialized)...")
 
             # Initialize retrievers if not already done
             if csv_retriever is None or pdf_retriever is None:
@@ -649,7 +609,7 @@ async def initialize_ai_agent():
                     csv_retriever=csv_retriever,
                     pdf_retriever=pdf_retriever
                 )
-                print("[OK] Advanced AI agent initialized successfully!")
+                print("[OK] AI agent initialized successfully!")
             else:
                 print("[WARNING] Retrievers not available - using fallback")
                 book_agent = None
@@ -904,6 +864,21 @@ if __name__ == "__main__":
 
     print(f"[INFO] Loaded {len(bookstore_inventory)} books in inventory")
     print(f"[INFO] AI Agent available: {AGENT_AVAILABLE}")
+
+    # Initialize retrievers on startup to avoid timeout on first request
+    if AGENT_AVAILABLE:
+        print("[STARTUP] Pre-initializing retrievers to avoid first-request timeout...")
+        csv_retriever, pdf_retriever = initialize_retrievers()
+        if csv_retriever and pdf_retriever:
+            print("[STARTUP] Building agent with pre-initialized retrievers...")
+            book_agent = build_book_agent(
+                csv_retriever=csv_retriever,
+                pdf_retriever=pdf_retriever
+            )
+            print("[OK] Agent ready! No timeout will occur on first request.")
+        else:
+            print("[WARNING] Retrievers failed to initialize")
+
     print("[INFO] Server starting at http://localhost:8000")
     print("[INFO] API documentation available at http://localhost:8000/library")
 

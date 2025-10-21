@@ -1,7 +1,17 @@
 {
   "permissions": {
     "allow": [
-      "Bash(python -c \"\nimport pandas as pd\n\n# Read both CSV files\nsimple = pd.read_csv(''evaluation/simple_retrieval_results.csv'')\nadvanced = pd.read_csv(''evaluation/advanced_retrieval_results.csv'')\n\n# Calculate mean for each metric\nmetrics = [''context_recall'', ''faithfulness'', ''context_precision'', ''answer_relevancy'', ''factual_correctness(mode=f1)'']\n\n# Create comparison data\ndata = []\nfor metric in metrics:\n    simple_val = simple[metric].mean()\n    advanced_val = advanced[metric].mean()\n    diff = advanced_val - simple_val\n    winner = ''Advanced'' if diff > 0 else ''Simple''\n    data.append({\n        ''Metric'': metric,\n        ''Simple'': f''{simple_val:.4f}'',\n        ''Advanced'': f''{advanced_val:.4f}'',\n        ''Difference'': f''{diff:+.4f}'',\n        ''Winner'': winner\n    })\n\n# Add overall average\nsimple_avg = simple[metrics].mean().mean()\nadvanced_avg = advanced[metrics].mean().mean()\ndiff_avg = advanced_avg - simple_avg\nwinner_avg = ''Advanced'' if diff_avg > 0 else ''Simple''\ndata.append({\n    ''Metric'': ''OVERALL AVERAGE'',\n    ''Simple'': f''{simple_avg:.4f}'',\n    ''Advanced'': f''{advanced_avg:.4f}'',\n    ''Difference'': f''{diff_avg:+.4f}'',\n    ''Winner'': winner_avg\n})\n\n# Create DataFrame and print\ndf = pd.DataFrame(data)\nprint(df.to_string(index=False))\n\")"
+      "Bash(python compare_metrics.py)",
+      "Bash(curl -X POST http://localhost:8000/ai-agent -H \"Content-Type: application/json\" -d \"{\"\"query\"\": \"\"tell me about harry potter third book\"\", \"\"request_type\"\": \"\"specific_book\"\"}\" -s)",
+      "Bash(curl -X POST http://localhost:8000/ai-agent -H \"Content-Type: application/json\" -d \"{\"\"query\"\": \"\"do you have harry potter and the chamber of secrets?\"\", \"\"request_type\"\": \"\"specific_book\"\"}\" -s)",
+      "Bash(curl -X POST http://localhost:8000/ai-agent -H \"Content-Type: application/json\" -d \"{\"\"query\"\": \"\"do you have the hunger games book?\"\", \"\"request_type\"\": \"\"specific_book\"\"}\" -s)",
+      "Bash(curl -X POST http://localhost:8000/ai-agent -H \"Content-Type: application/json\" -d \"{\"\"query\"\": \"\"which books you have about romance?\"\", \"\"request_type\"\": \"\"recommendation\"\"}\" -s)",
+      "Bash(python:*)",
+      "Bash(curl:*)",
+      "Bash(netstat:*)",
+      "Bash(findstr:*)",
+      "Bash(taskkill /F /PID 4272)",
+      "Bash(taskkill //F //PID 4272)"
     ],
     "deny": [],
     "ask": []

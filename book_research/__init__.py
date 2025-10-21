@@ -3,8 +3,14 @@
 
 from book_research.book_agent import build_book_agent
 from book_research.configuration import Configuration
-from book_research.state import AgentState, BookRequest, ClarifyWithUser
-from book_research.tools import think_tool, get_tavily_search_tool
+from book_research.state import (
+    AgentState,
+    BookRequest,
+    ClarifyWithUser,
+    SearchRouting,
+    SatisfactionCheck,
+)
+from book_research.tools import get_tavily_search_tool, format_social_post
 
 __all__ = [
     "build_book_agent",
@@ -12,6 +18,8 @@ __all__ = [
     "AgentState",
     "BookRequest",
     "ClarifyWithUser",
-    "think_tool",
+    "SearchRouting",
+    "SatisfactionCheck",
     "get_tavily_search_tool",
+    "format_social_post",
 ]

@@ -79,42 +79,17 @@ This multi-agent architecture with agentic reasoning provides intelligent, conte
 
 **Tavily Search API** - Powers the web search fallback agent (`web_search_agent`) to handle out-of-catalog queries by retrieving relevant book information from the broader web when local searches (CSV catalog and PDF content) return no results. This ensures customers always receive helpful responses even when asking about books not in the local inventory, preventing "dead end" interactions and maintaining a positive user experience.
 
-**Chunking Strategy:**
+**Retrieval System:**
 
-This project uses **
-** from LangChain Experimental with the following configuration:
+This project uses **Advanced Recursive Retrieval** combining:
+- **RecursiveCharacterTextSplitter**: Fast chunking (1000 chars, 200 overlap)
+- **Ensemble Retrieval**: BM25 + Multi-Query + Cohere Rerank for optimal relevance
+- **RAGAS Score**: 0.6935 (13.1% improvement over baseline)
+- **Startup Time**: ~60 seconds (pre-initialized at server startup)
 
-- **Chunking Method**: Semantic similarity-based splitting
-- **Breakpoint Threshold Type**: Percentile
-- **Breakpoint Threshold Amount**: 95 (95th percentile - moderate sensitivity)
-- **Embedding Model**: OpenAI text-embedding-3-small
+The system was selected after comprehensive RAGAS evaluation of 4 different approaches, balancing quality improvement (+66.7% context recall, +113.3% context precision) with production viability.
 
-**Why SemanticChunker:**
-
-**SemanticChunker was chosen to optimize retrieval quality for semantic queries** about themes, character development, plot arcs, and narrative elements. Unlike character-count-based chunking (RecursiveCharacterTextSplitter), SemanticChunker creates chunks at natural topic boundaries by analyzing semantic similarity between sentences, ensuring complete thematic discussions, character interactions, and plot developments remain intact within single chunks rather than being fragmented.
-
-**Key Advantages:**
-
-1. **Semantic Coherence** - Automatically identifies where topics shift in the narrative (e.g., scene changes, character perspective shifts, thematic transitions) and creates chunk boundaries at these natural breakpoints, producing chunks that are semantically self-contained and meaningful.
-
-2. **Superior for Thematic Questions** - When customers ask "What are the main themes?" or "How does the character develop?", SemanticChunker ensures retrieved passages contain complete thematic discussions or character arc segments rather than arbitrary fragments, significantly improving answer quality (estimated 10-20% improvement over fixed-size chunking).
-
-3. **Context Preservation** - Long thematic discussions (spanning 3-4 paragraphs) stay together in a single chunk, while brief topic shifts create appropriate boundaries, optimizing both retrieval precision and context completeness.
-
-**Trade-offs Accepted:**
-
-- **Preprocessing Cost**: ~$0.50-1.00 per book in embedding API calls during chunking (acceptable one-time cost for quality improvement in a certification/demonstration project)
-- **Processing Time**: 2-5 minutes for semantic analysis vs. instant character-based splitting (acceptable for batch preprocessing)
-- **Variable Chunk Sizes**: Produces chunks of varying lengths based on semantic content rather than predictable fixed sizes (beneficial for semantic coherence, requires adaptive handling)
-
-**Configuration Details:**
-
-- **Breakpoint Threshold Type (Percentile)**: Uses the 95th percentile of semantic distances to identify significant topic shifts, creating chunks at meaningful boundaries while avoiding over-fragmentation from minor shifts
-- **Embedding Model**: Leverages the same OpenAI text-embedding-3-small used for retrieval, ensuring consistency between chunking and search similarity calculations
-
-**Performance Validation:**
-
-This chunking strategy is implemented consistently across both production (`main.py`) and evaluation (`evaluation/evaluate_simple_pdf_book_agent.py`) environments. The semantic chunking approach typically produces 150-250 variable-length chunks from a 200-page novel, with each chunk representing a semantically coherent narrative unit optimized for content-based question answering.
+**See [RAG Pipeline Evaluation & Certification](#-rag-pipeline-evaluation--certification) section below for detailed evaluation results and methodology.**
 
 ## 🚀 Features
 
@@ -252,3 +227,122 @@ The system supports extensive configuration through environment variables:
 4. **Analytics**: Track bookstore performance and inventory insights
 
 The API comes with sample books including classics like "The Great Gatsby", "To Kill a Mockingbird", and "1984", plus sophisticated AI capabilities for modern bookstore operations.
+
+---
+
+## 📊 RAG Pipeline Evaluation & Certification
+
+### RAGAS Framework Assessment
+
+This project underwent comprehensive evaluation using the RAGAS (Retrieval-Augmented Generation Assessment) framework to measure and optimize retrieval quality.
+
+### Baseline System Performance
+
+**System:** Simple Retrieval with Recursive Chunking
+
+| Metric | Score | Interpretation |
+|--------|-------|----------------|
+| **Faithfulness** | 0.9800 | Excellent - Responses factually consistent with context |
+| **Context Recall** | 0.5000 | Moderate - Retrieves 50% of relevant information |
+| **Context Precision** | 0.2667 | Low - Significant noise in retrieved results |
+| **Answer Relevancy** | 0.9362 | Excellent - Answers directly address queries |
+| **Factual Correctness** | 0.3820 | Moderate - 38% factual overlap with ground truth |
+| **Average Score** | **0.6130** | Good baseline with room for improvement |
+
+**Evaluation Source:** [`evaluation/simple_retrieval/simple_retrieval_recursive_metrics.md`](evaluation/simple_retrieval/simple_retrieval_recursive_metrics.md)
+
+### Advanced Retrieval System Performance
+
+After implementing Advanced Recursive Retrieval with Ensemble methods:
+
+**System:** Advanced Retrieval with Recursive Chunking (BM25 + Multi-Query + Cohere Rerank)
+
+| Metric | Baseline | Advanced | Improvement | % Change |
+|--------|----------|----------|-------------|----------|
+| **Faithfulness** | 0.9800 | 0.9647 | -0.0153 | -1.6% |
+| **Context Recall** | 0.5000 | 0.8333 | +0.3333 | **+66.7%** ⭐ |
+| **Context Precision** | 0.2667 | 0.5689 | +0.3022 | **+113.3%** ⭐ |
+| **Answer Relevancy** | 0.9362 | 0.8436 | -0.0926 | -9.9% |
+| **Factual Correctness** | 0.3820 | 0.2571 | -0.1249 | -32.7% |
+| **Overall Average** | 0.6130 | 0.6935 | +0.0805 | **+13.1%** ⭐ |
+
+**Evaluation Source:** [`evaluation/advanced_retrieval/advanced_recursive_retrieval_metrics.md`](evaluation/advanced_retrieval/advanced_recursive_retrieval_metrics.md)
+
+### Complete Comparison Across All Systems
+
+Four retrieval approaches were evaluated:
+
+| System | Chunking Method | Retrieval Type | Average Score | Startup Time | Production Ready |
+|--------|----------------|----------------|---------------|--------------|------------------|
+| **Production (Current)** | Recursive | Ensemble+Rerank | **0.6935** | ~60 sec | ✅ Yes |
+| Simple Semantic | Semantic | Basic Vector | 0.7829 | 120+ sec | ❌ Timeout |
+| Simple Recursive | Recursive | Basic Vector | 0.6130 | <10 sec | ✅ Fast but lower quality |
+| Advanced Semantic | Semantic | Ensemble+Rerank | 0.5902 | 180+ sec | ❌ Timeout |
+
+**Evaluation Source:** [`evaluation/compare_retrieval_metrics.md`](evaluation/compare_retrieval_metrics.md)
+
+### Key Findings & Architecture Decisions
+
+**Why Advanced Recursive Retrieval Was Chosen:**
+
+1. **Best Production-Viable Quality** - Highest quality (0.6935) among systems with acceptable startup times
+2. **Dramatic Performance Gains:**
+   - Context Recall: 50% → 83% (+66.7%) - Retrieves much more relevant information
+   - Context Precision: 27% → 57% (+113.3%) - Dramatically reduced noise
+   - Overall Quality: +13.1% improvement over baseline
+3. **Acceptable Startup** - 60 seconds vs 120+ for semantic chunking, 180+ for advanced semantic
+4. **Pre-initialization** - Loaded at startup eliminates customer-facing latency
+
+**Why Simple Semantic (0.7829) Was Rejected:**
+- Despite highest quality, 120+ second initialization causes API timeouts
+- Unacceptable for customer-facing production environment
+- Quality advantage not worth reliability risk
+
+**Trade-offs Accepted:**
+- Slightly lower faithfulness (-1.6%) - Still excellent at 96%
+- Moderate relevancy decrease (-9.9%) - Still good at 84%
+- Lower factual correctness (-32.7%) - Requires investigation but acceptable for comprehensive retrieval
+- Longer startup (60s vs 10s) - One-time cost worth the quality improvement
+
+**Current Production Configuration:**
+- ✅ RecursiveCharacterTextSplitter (1000 chars, 200 overlap)
+- ✅ Ensemble Retrieval (BM25 + Multi-Query + Cohere Rerank)
+- ✅ Pre-initialization at server startup
+- ✅ No timeout risk, reliable performance
+
+### Evaluation Methodology
+
+**Testing Framework:**
+- **Tool:** RAGAS (Retrieval-Augmented Generation Assessment)
+- **Test Dataset:** 6 representative customer queries about book content
+- **Metrics:** Faithfulness, Context Recall, Context Precision, Answer Relevancy, Factual Correctness
+- **Model:** GPT-4o-mini for consistency across evaluations
+
+**Evaluation Process:**
+1. Baseline measurement with Simple Retrieval (0.6130)
+2. Test alternative chunking methods (Semantic vs Recursive)
+3. Test advanced retrieval (Ensemble with BM25 + Multi-Query + Rerank)
+4. Measure startup times and production viability
+5. Select optimal system balancing quality and performance
+
+### Key Takeaways
+
+**Evaluation-Driven Optimization:**
+> "Evaluation frameworks like RAGAS provide quantitative guidance for optimization, but real-world system design requires balancing multiple constraints including performance, reliability, cost, and user experience. The 'best' system is one that actually works for the customers while delivering measurable quality improvements."
+
+**Production vs Benchmark:**
+> "After rigorous RAGAS evaluation of 4 retrieval approaches, I implemented Advanced Recursive Retrieval with Ensemble methods, achieving a 13.1% quality improvement over the baseline while maintaining production reliability. The system demonstrates dramatically better context recall (+66.7%) and precision (+113.3%), proving that evaluation-driven optimization delivers measurable business value."
+
+**Success Metrics Achieved:**
+- ✅ Faithfulness: 0.9647 (maintained >0.95 target)
+- ✅ Context Recall: 0.8333 (exceeded 0.70 target by 19%)
+- ✅ Context Precision: 0.5689 (exceeded 0.50 target by 14%)
+- ✅ Overall RAGAS: 0.6935 (13.1% improvement achieved)
+
+### Complete Evaluation Documentation
+
+For detailed evaluation results and methodology:
+- **Baseline System:** [`evaluation/simple_retrieval/simple_retrieval_recursive_metrics.md`](evaluation/simple_retrieval/simple_retrieval_recursive_metrics.md)
+- **Advanced System:** [`evaluation/advanced_retrieval/advanced_recursive_retrieval_metrics.md`](evaluation/advanced_retrieval/advanced_recursive_retrieval_metrics.md)
+- **Complete Comparison:** [`evaluation/compare_retrieval_metrics.md`](evaluation/compare_retrieval_metrics.md)
+- **Certification Answers:** [`CERTIFICATION_ANSWERS.md`](CERTIFICATION_ANSWERS.md)

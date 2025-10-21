@@ -41,13 +41,11 @@ class Configuration(BaseModel):
         description="Weights for ensemble retriever [bm25, multi_query, compression]"
     )
 
-    # Search configuration
     max_web_search_results: int = Field(
         default=3,
         description="Maximum number of web search results to consider"
     )
 
-    # Behavior configuration
     allow_clarification: bool = Field(
         default=True,
         description="Whether to ask clarifying questions"

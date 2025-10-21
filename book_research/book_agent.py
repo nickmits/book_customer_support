@@ -13,59 +13,16 @@ from book_research.state import (
     AgentState,
     ClarifyWithUser,
     BookRequest,
+    SearchRouting,
+    SatisfactionCheck,
 )
 from book_research.configuration import Configuration
-from book_research.tools import get_tavily_search_tool
+from book_research.tools import get_tavily_search_tool, format_social_post
 
 
 configurable_model = init_chat_model(
     configurable_fields=("model", "max_tokens", "temperature", "api_key"),
 )
-
-
-
-
-@tool
-def format_social_post(
-    content: str,
-    include_hashtags: bool = True
-) -> str:
-    """
-    Format content as a social media post.
-    
-    Args:
-        content: The main content to format
-        include_hashtags: Whether to include hashtags (default True)
-        
-    Returns:
-        Formatted post ready for social media
-    """
-    hashtags = "\n\n#ThiefOfSorrows #Fantasy #DarkFantasy #BookRecommendation" if include_hashtags else ""
-    
-    post = f"""
-📱 SOCIAL MEDIA POST - Thief of Sorrows
-{'='*70}
-
-{content}
-{hashtags}
-
-{'='*70}
-✅ Ready to copy and paste!
-"""
-    return post
-
-
-
-
-class SearchRouting(BaseModel):
-    """Structured output for search routing decision."""
-    
-    search_target: Literal["csv_metadata", "pdf_fulltext", "both", "write_post"] = Field(
-        description="Which action: csv_metadata (catalog), pdf_fulltext (book content), both, or write_post (social media post)"
-    )
-    reasoning: str = Field(
-        description="Brief explanation of why this routing was chosen"
-    )
 
 
 async def route_search_query(
@@ -383,7 +340,13 @@ If it matches:
 3. Highlight interesting themes
 
 If it doesn't match:
-Say: "I searched our catalog, but we don't currently have '{query}' in stock. However, we do carry other titles you might enjoy..." (then briefly mention what we found if relevant)"""
+Say: "I searched our catalog, but we don't currently have '{query}' in stock."
+
+{f'''
+IMPORTANT - WEB SEARCH RESULTS FOUND:
+{web_search_info}
+
+YOU MUST include information from these web search results in your response to help the user learn about the book they asked for. Provide a brief summary based on the search results, including key details like the plot, characters, or themes. Include a link to one of the sources if relevant.''' if web_search_info else "However, we do carry other titles you might enjoy like {book.get('title')}..."}"""
             else:
                 prompt = f"""The user asked for: '{query}'
 
@@ -393,14 +356,38 @@ Say: "I searched our catalog, but we don't currently have '{query}' in stock. Ho
 
 Generate a helpful response about not having this book."""
         else:
-            prompt = f"""The user wants book recommendations.
+            if books_count > 0:
+                prompt = f"""The user wants book recommendations.
 
 Preferences: {book_request.interests if book_request.interests else 'general'}
 
-📚 Found {books_count} books in our CATALOG:
+{f'''IMPORTANT: We DO NOT have books matching "{book_request.interests if book_request.interests else 'their preferences'}" in our catalog.
+
+WEB SEARCH RESULTS:
+{web_search_info}
+
+YOU MUST:
+1. Start by clearly stating: "We don't currently have {book_request.interests if book_request.interests else 'books matching your preferences'} books in our catalog."
+2. Then offer to help: "However, here are some popular {book_request.interests if book_request.interests else ''} books you might be interested in:"
+3. List the books from the web search results with titles and brief descriptions.
+4. DO NOT suggest the books from our catalog (they don't match what the user wants).''' if web_search_info else f'''📚 Found {books_count} books in our CATALOG:
 {books}
 
-Generate recommendations with titles, authors, and descriptions."""
+Generate recommendations with titles, authors, and descriptions.'''}"""
+            else:
+                prompt = f"""The user wants book recommendations.
+
+Preferences: {book_request.interests if book_request.interests else 'general'}
+
+❌ Not found in our catalog.
+
+{f'''WEB SEARCH RESULTS:
+{web_search_info}
+
+YOU MUST:
+1. Start by clearly stating: "We don't currently have {book_request.interests if book_request.interests else 'books matching your preferences'} books in our catalog."
+2. Then offer: "However, here are some popular {book_request.interests if book_request.interests else ''} books you might be interested in:"
+3. List the books from the web search results with titles and brief descriptions.''' if web_search_info else "Apologize that we don't have books matching their preferences in our catalog."}"""
 
     elif search_target == "both":
         prompt = f"""The user asked: '{query}'
@@ -606,20 +593,82 @@ async def check_results(
     state: AgentState, config: RunnableConfig
 ) -> Command[Literal["web_search_agent", "__end__"]]:
     """Check if we found good results or need web search."""
-    
+
     search_results = state.get("search_results", {})
     books_count = search_results.get("books_count", 0)
     search_target = search_results.get("search_target", "")
-    
+    book_request = state.get("book_request")
+    request_type = book_request.request_type if book_request else "unclear"
+
+    # For PDF full text searches, always accept the results
     if search_target == "pdf_fulltext":
         return Command(goto=END, update={"search_results": search_results})
-    
+
     if books_count > 0:
-        return Command(goto=END, update={"search_results": search_results})
+        if request_type == "specific_book":
+            query = search_results.get("query", "").lower()
+            original_query = search_results.get("original_query", "").lower()
+            books = search_results.get("books", [])
+
+            has_relevant_match = False
+            for book in books:
+                book_title = book.get("title", "").lower()
+        
+                query_words = [w for w in query.split() if len(w) > 3] 
+                if any(word in book_title for word in query_words):
+                    has_relevant_match = True
+                    break
+
+            if has_relevant_match:
+                # Found a relevant book, proceed with results
+                return Command(goto=END, update={"search_results": search_results})
+            else:
+                # Books found but none match the specific query - try web search
+                return Command(
+                    goto="web_search_agent",
+                    update={"messages": [AIMessage(content="No exact match found in catalog. Searching the web...")]}
+                )
+        else:
+            # For recommendation requests, validate books match the interests/genre
+            if request_type == "recommendation":
+                interests = book_request.interests if book_request else []
+                if interests:
+                    # Check if books actually match the requested interests/genre
+                    books = search_results.get("books", [])
+                    query = search_results.get("query", "").lower()
+
+                    # Extract key genre/interest words (interests is already a list)
+                    interest_words = [w.lower() for interest in interests for w in interest.split() if len(w) > 3]
+                    query_words = [w for w in query.split() if len(w) > 3]
+                    all_keywords = set(interest_words + query_words)
+
+                    # Check if any book subjects/description match the interests
+                    has_relevant_match = False
+                    for book in books:
+                        subjects = str(book.get("subjects", "")).lower()
+                        description = str(book.get("description", "")).lower()
+                        title = str(book.get("title", "")).lower()
+
+                        # Check if any keyword appears in subjects, description, or title
+                        if any(keyword in subjects or keyword in description or keyword in title
+                               for keyword in all_keywords):
+                            has_relevant_match = True
+                            break
+
+                    if not has_relevant_match:
+                        # Books don't match the requested genre/interests - try web search
+                        return Command(
+                            goto="web_search_agent",
+                            update={"messages": [AIMessage(content="No matching books found for your interests. Searching the web...")]}
+                        )
+
+            # Books are relevant or no specific interests to validate against
+            return Command(goto=END, update={"search_results": search_results})
     else:
+        # No books found at all - definitely try web search
         return Command(
             goto="web_search_agent",
-            update={"messages": [AIMessage(content="❌ No results found. Trying web search...")]}
+            update={"messages": [AIMessage(content="No results found in catalog. Searching the web...")]}
         )
 
 
@@ -636,16 +685,15 @@ async def web_search_agent(
 
     try:
         results = await tavily_tool.ainvoke({"query": f"{query} book"})
-        
+
         web_info = f"Web search results for '{query}':\n\n{results}"
-        
         search_results["web_search_info"] = web_info
-        
+
         return Command(
             goto=END,
             update={
                 "search_results": search_results,
-                "messages": [AIMessage(content=f"🌐 Web search completed")]
+                "messages": [AIMessage(content=f"Web search completed for '{query}'")]
             }
         )
 
@@ -656,44 +704,9 @@ async def web_search_agent(
 
 
 
-
-@tool
-def reflect_on_results(
-    findings: str,
-    query: str,
-    iteration: int
-) -> str:
-    """
-    Reflect on search results to determine if more searching is needed.
-    
-    Args:
-        findings: Current search results
-        query: Original user query
-        iteration: Current iteration number
-        
-    Returns:
-        Reflection on whether results are sufficient
-    """
-    return f"Iteration {iteration}: Evaluating if '{findings[:100]}...' adequately answers '{query}'"
-
-
 # ============================================================================
 # SATISFACTION CHECK NODE (New - implements the loop logic)
 # ============================================================================
-
-class SatisfactionCheck(BaseModel):
-    """Structured output for satisfaction evaluation."""
-    
-    is_satisfied: bool = Field(
-        description="Whether current results are sufficient to answer the query"
-    )
-    reasoning: str = Field(
-        description="Why the results are or aren't sufficient"
-    )
-    next_strategy: Literal["refine_search", "try_different_source", "expand_search", "complete"] = Field(
-        description="What to do next if not satisfied"
-    )
-
 
 async def check_satisfaction(
     state: AgentState,
@@ -788,41 +801,6 @@ Consider:
         )
 
 
-# ============================================================================
-# POST REVISION LOOP (Optional - for post refinement)
-# ============================================================================
-
-class PostRevisionRequest(BaseModel):
-    """Check if user wants to revise the post."""
-    
-    needs_revision: bool = Field(
-        description="Whether the user requested changes to the post"
-    )
-    revision_instructions: str = Field(
-        description="What changes the user wants (if any)"
-    )
-
-
-async def check_post_revision(
-    state: AgentState,
-    config: RunnableConfig
-) -> Command[Literal["post_writing_agent", "__end__"]]:
-    """
-    Allow users to request post revisions (similar to research iterations).
-    """
-    
-    messages = state.get("messages", [])
-    post_revisions = state.get("post_revisions", 0)
-    
-    if post_revisions >= 2:
-        return Command(
-            goto=END,
-            update={
-                "messages": [AIMessage(content="Maximum post revisions reached (2). Final version above.")]
-            }
-        )
-    return Command(goto=END)
-
 
 
 def build_search_subgraph_with_loop(csv_retriever, pdf_retriever):
@@ -874,12 +852,12 @@ def build_book_agent(csv_retriever, pdf_retriever):
     builder.add_node("clarify_with_user", clarify_with_user)
     builder.add_node("parse_request", parse_request)
     builder.add_node("search_subgraph", search_subgraph)
-    builder.add_node("check_satisfaction", check_satisfaction)  # Add satisfaction check
+    builder.add_node("check_satisfaction", check_satisfaction)  
     builder.add_node("generate_response", generate_response)
     
     builder.add_edge(START, "clarify_with_user")
     builder.add_edge("parse_request", "search_subgraph")
-    builder.add_edge("search_subgraph", "check_satisfaction")  # Go to satisfaction check
+    builder.add_edge("search_subgraph", "check_satisfaction")  
     builder.add_edge("generate_response", END)
     
     return builder.compile()

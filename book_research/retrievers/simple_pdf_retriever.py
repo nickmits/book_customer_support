@@ -4,7 +4,7 @@ Simple PDF Retriever with Qdrant
 
 from typing import List, Optional
 from langchain_community.document_loaders import PyMuPDFLoader
-from langchain_text_splitters import RecursiveCharacterTextSplitter  # ← FIXED IMPORT
+from langchain_text_splitters import RecursiveCharacterTextSplitter  
 from langchain_openai import OpenAIEmbeddings
 from langchain_community.vectorstores import Qdrant
 from langchain_core.documents import Document
@@ -22,11 +22,9 @@ class SimplePDFRetriever:
         """Load PDF, create vector store, and initialize retriever."""
         print(f"[INIT] Loading PDF: {self.pdf_path}")
         
-        # Load and split PDF
         loader = PyMuPDFLoader(self.pdf_path)
         pages = loader.load()
         
-        # Add metadata
         for i, page in enumerate(pages):
             page.metadata.update({
                 "page_number": i + 1,
@@ -34,13 +32,11 @@ class SimplePDFRetriever:
                 "source_type": "pdf_fulltext"
             })
         
-        # Split into chunks
         text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
         pdf_docs = text_splitter.split_documents(pages)
         
         print(f"[INIT] Created {len(pdf_docs)} chunks")
         
-        # Create vector store using your pattern
         pdf_embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
         pdf_vectorstore = Qdrant.from_documents(
             pdf_docs,

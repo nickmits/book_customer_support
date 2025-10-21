@@ -65,6 +65,31 @@ class SearchComplete(BaseModel):
     )
 
 
+class SearchRouting(BaseModel):
+    """Structured output for search routing decision."""
+
+    search_target: Literal["csv_metadata", "pdf_fulltext", "both", "write_post"] = Field(
+        description="Which action: csv_metadata (catalog), pdf_fulltext (book content), both, or write_post (social media post)"
+    )
+    reasoning: str = Field(
+        description="Brief explanation of why this routing was chosen"
+    )
+
+
+class SatisfactionCheck(BaseModel):
+    """Structured output for satisfaction evaluation."""
+
+    is_satisfied: bool = Field(
+        description="Whether current results are sufficient to answer the query"
+    )
+    reasoning: str = Field(
+        description="Why the results are or aren't sufficient"
+    )
+    next_strategy: Literal["refine_search", "try_different_source", "expand_search", "complete"] = Field(
+        description="What to do next if not satisfied"
+    )
+
+
 class AgentState(TypedDict):
     messages: Annotated[list, add_messages]
     book_request: Optional[BookRequest]

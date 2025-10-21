@@ -1,7 +1,7 @@
 """
-RAGAS Evaluation for Advanced Retrieval System
-Evaluates the advanced retrieval system with Ensemble, BM25, Multi-Query, and Cohere reranking
-FIXED VERSION - Aligned chunk sizes for fair evaluation
+RAGAS Evaluation for Advanced Semantic Retrieval System
+Evaluates the advanced retrieval system from semantic_main.py
+Uses SemanticChunker with Ensemble, BM25, Multi-Query, and Cohere reranking
 """
 
 from dotenv import load_dotenv
@@ -31,15 +31,9 @@ from langchain_community.document_loaders import PyMuPDFLoader
 from langchain_experimental.text_splitter import SemanticChunker
 import pandas as pd
 
-# Import the advanced retrieval components
-from langchain_community.vectorstores import Qdrant
-from langchain.retrievers import EnsembleRetriever
-from langchain.retrievers.multi_query import MultiQueryRetriever
-from langchain.retrievers.contextual_compression import ContextualCompressionRetriever
-from langchain_cohere import CohereRerank
-from langchain_community.retrievers import BM25Retriever
-from langchain_core.documents import Document
-from langchain.chat_models import init_chat_model
+# Import the semantic retrieval system
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from semantic_main import initialize_semantic_retrievers, BREAKPOINT_THRESHOLD_TYPE, BREAKPOINT_THRESHOLD_AMOUNT
 
 # Apply nest_asyncio for event loop management
 nest_asyncio.apply()
@@ -48,15 +42,11 @@ if sys.platform == 'win32':
 
 load_dotenv()
 
-# SEMANTIC CHUNKING PARAMETERS FOR ADVANCED RETRIEVER
-BREAKPOINT_THRESHOLD_TYPE = "percentile"
-BREAKPOINT_THRESHOLD_AMOUNT = 95
-
 def test_retriever_directly(retriever, test_questions: List[str]):
     """Quick test to verify retriever is working."""
     print("\n[RETRIEVER TEST]")
     print("="*50)
-    
+
     for q in test_questions:
         docs = retriever.get_relevant_documents(q)
         print(f"\nQuestion: {q}")
@@ -64,177 +54,8 @@ def test_retriever_directly(retriever, test_questions: List[str]):
         if docs:
             print(f"Top result preview: {docs[0].page_content[:150]}...")
             print(f"Metadata: {docs[0].metadata}")
-    
-    print("="*50)
 
-def initialize_advanced_retrievers():
-    """
-    Initialize the advanced CSV and PDF retrievers with semantic chunking.
-    """
-    print("[INIT] Initializing advanced retrievers with SemanticChunker...")
-    print(f"[PARAMS] Using semantic chunking with {BREAKPOINT_THRESHOLD_TYPE} threshold")
-    
-    # Get API keys
-    openai_api_key = os.getenv("OPENAI_API_KEY")
-    cohere_api_key = os.getenv("COHERE_API_KEY")
-    
-    if not openai_api_key:
-        raise ValueError("OPENAI_API_KEY not found in environment")
-    
-    # Initialize models
-    chat_model = init_chat_model(
-        model="openai:gpt-4o-mini",
-        api_key=openai_api_key,
-        temperature=0.1,
-        max_tokens=1000
-    )
-    
-    embedding_model = OpenAIEmbeddings(
-        model="text-embedding-3-small",
-        openai_api_key=openai_api_key
-    )
-    
-    # ============================================================================
-    # Load CSV Data (Book Catalog) - Optional for this evaluation
-    # ============================================================================
-    csv_path = "book_research/data/space_exploration_books.csv"
-    csv_retriever = None
-    
-    if os.path.exists(csv_path):
-        df = pd.read_csv(csv_path)
-        print(f"[INFO] Loaded {len(df)} books from CSV catalog")
-        
-        csv_documents = []
-        for index, row in df.iterrows():
-            book_text = f"""Title: {row['title']}
-Author: {row['author']}
-Work Key: {row['work_key']}
-Description: {row['description']}
-Subjects: {row['subjects']}"""
-            
-            metadata = {
-                "title": row['title'],
-                "author": row['author'],
-                "work_key": row['work_key'],
-                "subjects": row['subjects'],
-                "source_type": "csv_metadata",
-                "row_index": index
-            }
-            
-            doc = Document(page_content=book_text.strip(), metadata=metadata)
-            csv_documents.append(doc)
-        
-        # Create advanced CSV retriever
-        csv_vectorstore = Qdrant.from_documents(
-            documents=csv_documents,
-            embedding=embedding_model,
-            location=":memory:",
-            collection_name="csv_catalog"
-        )
-        
-        csv_bm25 = BM25Retriever.from_documents(csv_documents)
-        csv_bm25.k = 5
-        
-        csv_multi_query = MultiQueryRetriever.from_llm(
-            retriever=csv_vectorstore.as_retriever(search_kwargs={"k": 10}),
-            llm=chat_model
-        )
-        
-        if cohere_api_key:
-            csv_compression = ContextualCompressionRetriever(
-                base_retriever=csv_multi_query,
-                base_compressor=CohereRerank(model="rerank-v3.5", cohere_api_key=cohere_api_key)
-            )
-            csv_retriever = EnsembleRetriever(
-                retrievers=[csv_bm25, csv_multi_query, csv_compression],
-                weights=[0.2, 0.3, 0.5]
-            )
-            print("[OK] CSV retriever with Cohere reranking created")
-        else:
-            csv_retriever = EnsembleRetriever(
-                retrievers=[csv_bm25, csv_multi_query],
-                weights=[0.4, 0.6]
-            )
-            print("[OK] CSV retriever created (no reranking)")
-    
-    # ============================================================================
-    # Load PDF Data (Thief of Sorrows) - CRITICAL: Use aligned chunk sizes
-    # ============================================================================
-    pdf_path = "book_research/data/thief_of_sorrows.pdf"
-    pdf_retriever = None
-    
-    if os.path.exists(pdf_path):
-        loader = PyMuPDFLoader(pdf_path)
-        pdf_pages = loader.load()
-        print(f"[INFO] Loaded {len(pdf_pages)} pages from PDF")
-        
-        # Add metadata
-        for i, page in enumerate(pdf_pages):
-            page.metadata.update({
-                "book_title": "Thief of Sorrows",
-                "author": "Kristen Long",
-                "source_type": "pdf_fulltext",
-                "page_number": i + 1,
-                "total_pages": len(pdf_pages),
-                "page": i + 1  # Add for compatibility
-            })
-        
-        # SEMANTIC CHUNKING: Use semantic similarity for optimal boundaries
-        # Limit to first 20 pages for faster testing
-        pages_to_use = pdf_pages[:20]
-        print(f"[INFO] Using SemanticChunker on first {len(pages_to_use)} pages for testing...")
-        text_splitter = SemanticChunker(
-            embedding_model,
-            breakpoint_threshold_type=BREAKPOINT_THRESHOLD_TYPE,
-            breakpoint_threshold_amount=BREAKPOINT_THRESHOLD_AMOUNT
-        )
-        pdf_chunks = text_splitter.split_documents(pages_to_use)
-        print(f"[INFO] Created {len(pdf_chunks)} semantic chunks from {len(pages_to_use)} pages")
-        
-        # Create advanced PDF retriever
-        pdf_vectorstore = Qdrant.from_documents(
-            documents=pdf_chunks,
-            embedding=embedding_model,
-            location=":memory:",
-            collection_name="pdf_fulltext"
-        )
-        
-        # BM25 for keyword search
-        pdf_bm25 = BM25Retriever.from_documents(pdf_chunks)
-        pdf_bm25.k = 10
-        
-        # Multi-query for better coverage
-        pdf_multi_query = MultiQueryRetriever.from_llm(
-            retriever=pdf_vectorstore.as_retriever(search_kwargs={"k": 15}),
-            llm=chat_model
-        )
-        
-        # Ensemble with optional reranking
-        if cohere_api_key:
-            pdf_compression = ContextualCompressionRetriever(
-                base_retriever=pdf_multi_query,
-                base_compressor=CohereRerank(model="rerank-v3.5", cohere_api_key=cohere_api_key)
-            )
-            pdf_retriever = EnsembleRetriever(
-                retrievers=[pdf_bm25, pdf_multi_query, pdf_compression],
-                weights=[0.3, 0.3, 0.4]
-            )
-            print("[OK] PDF retriever with Cohere reranking created")
-        else:
-            pdf_retriever = EnsembleRetriever(
-                retrievers=[pdf_bm25, pdf_multi_query],
-                weights=[0.5, 0.5]
-            )
-            print("[OK] PDF retriever created (no reranking)")
-        
-        # Test the retriever immediately
-        test_questions = [
-            "Who is the author of Thief of Sorrows?",
-            "What is the main character's name?"
-        ]
-        test_retriever_directly(pdf_retriever, test_questions)
-    
-    return csv_retriever, pdf_retriever
+    print("="*50)
 
 class PDFOnlyAdvancedChain:
     """Direct PDF retrieval bypassing agent routing for fair evaluation."""
@@ -388,10 +209,11 @@ def run_advanced_evaluation_pipeline(
     use_multiHop: bool = False
 ):
     """
-    Complete evaluation pipeline for the advanced retrieval system with semantic chunking.
+    Complete evaluation pipeline for the advanced semantic retrieval system.
+    Uses retrievers from semantic_main.py
     """
     print("="*70)
-    print("ADVANCED RETRIEVAL SYSTEM - SEMANTIC CHUNKER EVALUATION")
+    print("ADVANCED SEMANTIC RETRIEVAL SYSTEM - EVALUATION")
     print("="*70)
     print(f"Configuration:")
     print(f"  - Chunking Strategy: SemanticChunker")
@@ -401,12 +223,20 @@ def run_advanced_evaluation_pipeline(
     print(f"  - Multi-hop: {use_multiHop}")
     print("="*70)
 
-    # Step 1: Initialize advanced retrievers with semantic chunking
-    csv_retriever, pdf_retriever = initialize_advanced_retrievers()
-    
+    # Step 1: Initialize semantic retrievers from semantic_main.py
+    print("\n[Importing] Retrievers from semantic_main.py...")
+    csv_retriever, pdf_retriever = initialize_semantic_retrievers()
+
     if not pdf_retriever:
         print("[ERROR] PDF retriever not initialized. Check your data files.")
         return None, None
+
+    # Test the retriever
+    test_questions = [
+        "Who is the author of Thief of Sorrows?",
+        "What is the main character's name?"
+    ]
+    test_retriever_directly(pdf_retriever, test_questions)
     
     # Step 2: Load and chunk PDF for test generation with semantic chunking
     pdf_chunks = load_and_chunk_pdf(pdf_path)
@@ -465,13 +295,72 @@ def run_advanced_evaluation_pipeline(
 
     return results, df_questions
 
-# Main execution
-if __name__ == "__main__":
-    # Configuration
-    PDF_PATH = "book_research/data/thief_of_sorrows.pdf"
-    TESTSET_SIZE = 10  # Increased for better evaluation
+def save_metrics_to_markdown(metric_scores: Dict[str, float], output_path: str):
+    """
+    Save RAGAS metrics results to a Markdown table.
 
-    # Run advanced retrieval evaluation
+    Args:
+        metric_scores: Dictionary of metric names and their average scores
+        output_path: Path to save the markdown file
+    """
+    from datetime import datetime
+
+    # Create markdown content
+    markdown_content = f"""# RAGAS Evaluation Metrics - Advanced Semantic Retrieval System
+
+**Evaluation Date:** {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+
+**Configuration:**
+- Chunking Method: SemanticChunker
+- Threshold Type: {BREAKPOINT_THRESHOLD_TYPE}
+- Threshold Amount: {BREAKPOINT_THRESHOLD_AMOUNT}
+- Retrieval Components: Ensemble (BM25 + Multi-Query + Cohere Rerank)
+- Model: gpt-4o-mini
+
+## Metrics Results
+
+| Metric | Score |
+|--------|-------|
+"""
+
+    # Add each metric to the table
+    for metric_name, score in metric_scores.items():
+        # Format metric name for display
+        display_name = metric_name.replace('_', ' ').title()
+        markdown_content += f"| {display_name} | {score:.4f} |\n"
+
+    # Add summary statistics
+    avg_score = sum(metric_scores.values()) / len(metric_scores)
+    markdown_content += f"\n**Average Score:** {avg_score:.4f}\n"
+
+    # Add interpretation guide
+    markdown_content += """
+## Metric Descriptions
+
+- **Faithfulness**: Measures factual consistency of the answer with the context
+- **Context Recall**: Measures how well retrieved context aligns with ground truth
+- **Context Precision**: Measures signal-to-noise ratio of retrieved contexts
+- **Answer Relevancy**: Measures how relevant the answer is to the question
+- **Factual Correctness**: Measures factual overlap between answer and ground truth
+
+*Score Range: 0.0 (worst) to 1.0 (best)*
+
+## System Architecture
+
+This evaluation uses the **Advanced Semantic Retrieval System** with:
+- **SemanticChunker** for intelligent text splitting
+- **Ensemble Retriever** combining BM25, Multi-Query, and Cohere Rerank
+- **Qdrant** vector store for efficient similarity search
+"""
+
+    with open(output_path, 'w', encoding='utf-8') as f:
+        f.write(markdown_content)
+
+
+if __name__ == "__main__":
+    PDF_PATH = "book_research/data/thief_of_sorrows.pdf"
+    TESTSET_SIZE = 10  
+
     print("\n" + "="*70)
     print("ADVANCED RETRIEVAL SYSTEM EVALUATION")
     print("="*70)
@@ -482,7 +371,7 @@ if __name__ == "__main__":
         use_multiHop=False
     )
 
-    # Display results
+
     print("\n" + "="*70)
     print("EVALUATION RESULTS")
     print("="*70)
@@ -491,25 +380,20 @@ if __name__ == "__main__":
     if results and hasattr(results, 'to_pandas'):
         df_results = results.to_pandas()
 
+
         print("\n[Average Scores]:")
-        for metric in ['faithfulness', 'context_recall', 'context_precision', 'answer_relevancy', 'factual_correctness(mode=f1)']:
+        metrics = [
+            'faithfulness',
+            'context_recall',
+            'context_precision',
+            'answer_relevancy',
+            'factual_correctness(mode=f1)'
+        ]
+
+        metric_scores = {}
+        for metric in metrics:
             if metric in df_results.columns:
                 avg_score = df_results[metric].mean()
+                metric_scores[metric] = avg_score
                 print(f"  {metric}: {avg_score:.3f}")
-
-        df_results.to_csv("evaluation/advanced_retrieval_results.csv", index=False)
-        print("\n[Saved] Results to 'evaluation/advanced_retrieval_results.csv'")
-
-        # Compare with simple retriever if available
-        simple_results_path = "evaluation/simple_retrieval_results.csv"
-        if os.path.exists(simple_results_path):
-            simple_df = pd.read_csv(simple_results_path)
-            print("\n[Comparison with Simple Retriever]:")
-            comparison_metrics = ['faithfulness', 'context_recall', 'context_precision', 'answer_relevancy']
-            for metric in comparison_metrics:
-                if metric in simple_df.columns and metric in df_results.columns:
-                    simple_score = simple_df[metric].mean()
-                    advanced_score = df_results[metric].mean()
-                    improvement = advanced_score - simple_score
-                    print(f"  {metric}:")
-                    print(f"    Simple: {simple_score:.3f} | Advanced: {advanced_score:.3f} | Improvement: {improvement:+.3f}")
+        save_metrics_to_markdown(metric_scores, "evaluation/advanced_semantic_retrieval_metrics.md")

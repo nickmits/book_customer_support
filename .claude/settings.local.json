@@ -11,7 +11,8 @@
       "Bash(netstat:*)",
       "Bash(findstr:*)",
       "Bash(taskkill /F /PID 4272)",
-      "Bash(taskkill //F //PID 4272)"
+      "Bash(taskkill //F //PID 4272)",
+      "Bash(powershell -Command \"Get-Content ''C:\\Users\\nickm\\Documents\\book_customer_support\\README.md'' | Measure-Object -Line\")"
     ],
     "deny": [],
     "ask": []

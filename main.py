@@ -42,6 +42,7 @@ try:
     from book_research.configuration import Configuration
     from book_research.state import AgentState
     from book_research.book_agent import build_book_agent
+    from book_research.retrievers.advanced_recursive_retriever import initialize_advanced_recursive_retrievers
     AGENT_AVAILABLE = True
     print("[OK] Book agent components loaded successfully")
 except ImportError as e:
@@ -305,11 +306,21 @@ def extract_pdf_metadata(pdf_path: str) -> dict:
 
 def initialize_retrievers():
     """
-    Initialize CSV and PDF retrievers for the agent.
-    Uses OPTIMIZED Simple Vector Retrieval with Fast Recursive Chunking
-    - Simple vector search (no complex ensemble) for speed
-    - RecursiveCharacterTextSplitter for instant startup
-    - Better performance than original while being production-ready
+    Initialize CSV and PDF retrievers using Advanced Recursive Retrieval.
+
+    RAGAS Performance: 0.6935 average (13.1% improvement over simple baseline)
+
+    Configuration:
+    - RecursiveCharacterTextSplitter (1000 chars, 200 overlap) - Fast chunking
+    - Ensemble Retrieval: BM25 + Multi-Query + Cohere Rerank
+    - Initialization: ~60 seconds (pre-loaded at startup to avoid request timeout)
+
+    Performance Improvements vs Simple Retrieval:
+    - Context Recall: +66.7% (0.50 → 0.83) - Retrieves much more relevant information
+    - Context Precision: +113.3% (0.27 → 0.57) - Dramatically less noise in results
+    - Overall Score: +13.1% (0.61 → 0.69) - Better quality answers
+
+    Evaluation Source: evaluation/advanced_retrieval/advanced_recursive_retrieval_metrics.md
     """
     global csv_retriever, pdf_retriever
 
@@ -318,141 +329,32 @@ def initialize_retrievers():
         return None, None
 
     try:
-        from langchain.text_splitter import RecursiveCharacterTextSplitter
+        print("\n" + "="*70)
+        print("Initializing ADVANCED Recursive Retrieval System")
+        print("   RAGAS Score: 0.6935 (13.1% improvement over baseline)")
+        print("   Configuration: Ensemble (BM25 + Multi-Query + Cohere Rerank)")
+        print("="*70 + "\n")
 
-        # Get API keys from environment
-        openai_api_key = os.getenv("OPENAI_API_KEY")
-
-        if not openai_api_key:
-            print("[ERROR] OPENAI_API_KEY not found in environment")
-            return None, None
-
-        # Initialize embedding model
-        embedding_model = OpenAIEmbeddings(
-            model="text-embedding-3-small",
-            api_key=openai_api_key
+        # Use advanced retriever from separate module
+        csv_retriever, pdf_retriever = initialize_advanced_recursive_retrievers(
+            csv_path="book_research/data/space_exploration_books.csv",
+            pdf_path="book_research/data/thief_of_sorrows.pdf",
+            openai_api_key=os.getenv("OPENAI_API_KEY"),
+            cohere_api_key=os.getenv("COHERE_API_KEY"),
+            chunk_size=1000,
+            chunk_overlap=200
         )
 
-        print("[PERFORMANCE] Using OPTIMIZED retrieval: Simple Vector + Fast Chunking")
-        print("[INFO] Fast startup, no timeout, good performance")
-
-        # ============================================================================
-        # Load CSV Data (Book Catalog) - Simple vector search
-        # ============================================================================
-        csv_path = "book_research/data/space_exploration_books.csv"
-        if not os.path.exists(csv_path):
-            print(f"[WARNING] CSV file not found: {csv_path}")
-            csv_documents = []
-        else:
-            df = pd.read_csv(csv_path)
-            print(f"[INFO] Loaded {len(df)} books from CSV")
-
-            csv_documents = []
-            for index, row in df.iterrows():
-                book_text = f"""Title: {row['title']}
-Author: {row['author']}
-Work Key: {row['work_key']}
-
-Description: {row['description']}
-
-Subjects: {row['subjects']}
-"""
-                metadata = {
-                    "title": row['title'],
-                    "author": row['author'],
-                    "work_key": row['work_key'],
-                    "subjects": row['subjects'],
-                    "source_type": "csv_metadata",
-                    "has_full_text": False,
-                    "row_index": index
-                }
-
-                doc = Document(page_content=book_text.strip(), metadata=metadata)
-                csv_documents.append(doc)
-
-        # ============================================================================
-        # Load PDF Data with FAST RECURSIVE CHUNKING (Production Ready!)
-        # ============================================================================
-        pdf_path = "book_research/data/thief_of_sorrows.pdf"
-        if not os.path.exists(pdf_path):
-            print(f"[WARNING] PDF file not found: {pdf_path}")
-            pdf_chunks = []
-            pdf_book_metadata = {"title": "Unknown", "author": "Unknown"}
-        else:
-            # Extract metadata from PDF
-            pdf_book_metadata = extract_pdf_metadata(pdf_path)
-
-            loader = PyMuPDFLoader(pdf_path)
-            pdf_pages = loader.load()
-            print(f"[INFO] Loaded {len(pdf_pages)} pages from PDF")
-
-            # Add metadata using extracted info
-            for i, page in enumerate(pdf_pages):
-                page.metadata.update({
-                    "book_title": pdf_book_metadata["title"],
-                    "author": pdf_book_metadata["author"],
-                    "source_type": "pdf_fulltext",
-                    "has_full_text": True,
-                    "page_number": i + 1,
-                    "total_pages": len(pdf_pages),
-                    "page": i + 1
-                })
-
-            # FAST RECURSIVE CHUNKING: Instant startup, production-ready
-            print(f"[INFO] Using RecursiveCharacterTextSplitter (fast & reliable)...")
-            text_splitter = RecursiveCharacterTextSplitter(
-                chunk_size=1000,
-                chunk_overlap=200,
-                length_function=len,
-                is_separator_regex=False
-            )
-
-            # Split pages - this is instant compared to SemanticChunker
-            pdf_chunks = text_splitter.split_documents(pdf_pages)
-            print(f"[INFO] Created {len(pdf_chunks)} chunks from {len(pdf_pages)} pages (FAST)")
-
-        # ============================================================================
-        # Create SIMPLE CSV Retriever (Basic Vector Search - Fast & Reliable)
-        # ============================================================================
-        if csv_documents:
-            print("[INIT] Building simple CSV retriever (vector search only)...")
-            csv_vectorstore = Qdrant.from_documents(
-                documents=csv_documents,
-                embedding=embedding_model,
-                location=":memory:",
-                collection_name="csv_catalog"
-            )
-
-            # Simple retriever - no complex ensemble, just vector search
-            csv_retriever = csv_vectorstore.as_retriever(search_kwargs={"k": 10})
-            print("[OK] CSV retriever created (simple vector search)")
-        else:
-            print("[WARNING] No CSV documents loaded")
-            csv_retriever = None
-
-        # ============================================================================
-        # Create SIMPLE PDF Retriever (Basic Vector Search - FAST & GOOD)
-        # ============================================================================
-        if pdf_chunks:
-            print(f"[INIT] Building simple PDF retriever with {len(pdf_chunks)} chunks...")
-            pdf_vectorstore = Qdrant.from_documents(
-                documents=pdf_chunks,
-                embedding=embedding_model,
-                location=":memory:",
-                collection_name="pdf_fulltext"
-            )
-
-            # Simple retriever - fast vector search, no complex pipelines
-            pdf_retriever = pdf_vectorstore.as_retriever(search_kwargs={"k": 10})
-            print(f"[OK] PDF retriever created (simple vector - production ready)")
-        else:
-            print("[WARNING] No PDF documents loaded")
-            pdf_retriever = None
+        print("\n" + "="*70)
+        print("Advanced Retrieval System Ready")
+        print(f"   CSV Retriever: {'Loaded' if csv_retriever else 'Failed'}")
+        print(f"   PDF Retriever: {'Loaded' if pdf_retriever else 'Failed'}")
+        print("="*70 + "\n")
 
         return csv_retriever, pdf_retriever
 
     except Exception as e:
-        print(f"[ERROR] Error initializing retrievers: {e}")
+        print(f"[ERROR] Error initializing advanced retrievers: {e}")
         import traceback
         traceback.print_exc()
         return None, None

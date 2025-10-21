@@ -97,7 +97,7 @@ def initialize_advanced_recursive_retrievers(
 
     try:
         print("\n" + "="*70)
-        print("🔧 Initializing Advanced Recursive Retrieval System")
+        print("Initializing Advanced Recursive Retrieval System")
         print("   Configuration: Ensemble + RecursiveCharacterTextSplitter")
         print(f"   Performance: 0.6935 average")
         print("="*70 + "\n")
@@ -183,7 +183,7 @@ Subjects: {row['subjects']}
                     weights=[0.4, 0.6]
                 )
 
-            print("[CSV] ✅ Ensemble retriever created")
+            print("[CSV] Ensemble retriever created")
         else:
             print(f"[CSV] ⚠️  File not found: {csv_path}")
 
@@ -254,12 +254,12 @@ Subjects: {row['subjects']}
                     weights=[0.5, 0.5]
                 )
 
-            print(f"[PDF] ✅ Ensemble retriever created")
+            print(f"[PDF] Ensemble retriever created")
         else:
             print(f"[PDF] ⚠️  File not found: {pdf_path}")
 
         print("\n" + "="*70)
-        print("✅ Advanced Recursive Retrieval System Initialized")
+        print("Advanced Recursive Retrieval System Initialized")
         print(f"   CSV Retriever: {'Ready' if csv_retriever else 'Not Available'}")
         print(f"   PDF Retriever: {'Ready' if pdf_retriever else 'Not Available'}")
         print("="*70 + "\n")

@@ -1,6 +1,5 @@
 # RAGAS Evaluation Metrics - Advanced Recursive Retrieval System
 
-**Evaluation Date:** 2025-10-21 11:35:01
 
 **Configuration:**
 - Chunking Method: RecursiveCharacterTextSplitter

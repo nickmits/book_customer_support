@@ -1,6 +1,5 @@
 # RAGAS Evaluation Metrics - Simple PDF Retriever
 
-**Evaluation Date:** 2025-10-21 00:07:55
 
 **Configuration:**
 - Chunking Method: RecursiveCharacterTextSplitter
